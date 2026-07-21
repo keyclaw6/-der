@@ -1,0 +1,7 @@
+# Every baseline requirement in openspec/specs/**/spec.md must have an owner.
+# The key format is: <capability-path>/<requirement-title-as-kebab-case>
+# Example:
+# [requirements]
+# "authentication/user-can-sign-in" = ["@team-auth"]
+
+[requirements]

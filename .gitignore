@@ -1,0 +1,15 @@
+# Dotenvx private decryption keys
+.env.keys
+.env.keys.*
+
+# Tool and dependency state
+node_modules/
+.codebase-memory/
+__pycache__/
+*.pyc
+
+# Common local output
+.DS_Store
+coverage/
+dist/
+build/

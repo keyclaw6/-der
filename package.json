@@ -1,0 +1,20 @@
+{
+  "name": "agent-first-project-template",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Minimal harness-first repository template for human and agent development.",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "check": "python3 scripts/check.py && openspec validate --all --strict && dotenvx precommit",
+    "env": "dotenvx run --strict --no-native --",
+    "spec:finalize": "python3 scripts/finalize_change.py",
+    "spec:owners": "python3 scripts/spec_owners.py",
+    "spec:validate": "openspec validate --all --strict"
+  },
+  "devDependencies": {
+    "@dotenvx/dotenvx": "2.6.0",
+    "@fission-ai/openspec": "1.6.0"
+  }
+}

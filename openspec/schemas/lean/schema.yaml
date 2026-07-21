@@ -1,0 +1,119 @@
+name: lean
+version: 1
+description: Lean OpenSpec workflow - one proposal (why, goals, design, definition of done) → delta specs
+artifacts:
+  - id: proposal
+    generates: proposal.md
+    description: Single change document - why, goals/non-goals, what changes, optional design, definition of done
+    template: proposal.md
+    instruction: >
+      Create the single change document. It merges what the spec-driven schema
+      splits into proposal.md, design.md, and tasks.md.
+
+
+      Sections:
+
+      - Top line - **Purpose**: one sentence, the outcome this change produces.
+
+      - **Why**: the problem statement. What breaks or is missing today, and
+      why now. One or two short paragraphs, no filler.
+
+      - **Goals / Non-Goals**: declarative bullets. Non-goals are real
+      temptations this change deliberately excludes, not strawmen.
+
+      - **What Changes**: specific bullets - new capabilities, modifications,
+      removals. Mark breaking changes with **BREAKING**.
+
+      - **Capabilities**: the contract with the specs artifact.
+        - New: kebab-case names; each becomes `specs/<name>/spec.md`.
+        - Modified: existing spec folder names from `openspec/specs/` whose requirements change. Leave empty if none.
+      - **Design** (OPTIONAL): include only when a decision is hard to
+      reverse, surprising, or a real trade-off. Per decision: what was chosen,
+      why, alternatives considered, risk and mitigation. Delete the section
+      otherwise - reversible choices do not need a design record.
+
+      - **Definition of Done**: verifiable completion criteria as `- [ ]`
+      checkboxes. Observable outcomes and passing checks, not implementation
+      steps. The apply phase tracks these boxes.
+
+
+      Research existing specs before filling in Capabilities. Keep the whole
+      document to one or two pages. Focus on outcomes and decisions; the
+      specs carry the behavioral detail.
+    requires: []
+  - id: specs
+    generates: specs/**/*.md
+    description: Delta specifications for the change
+    template: spec.md
+    instruction: >
+      Create specification files that define WHAT the system must do.
+
+
+      Create one spec file per capability listed in the proposal's
+      Capabilities section.
+
+      - New capabilities: use the exact kebab-case name from the proposal
+      (specs/<capability>/spec.md).
+
+      - Modified capabilities: use the existing spec folder name from
+      openspec/specs/<capability>/ when creating the delta spec at
+      specs/<capability>/spec.md.
+
+
+      Delta operations (use ## headers):
+
+      - **ADDED Requirements**: New capabilities
+
+      - **MODIFIED Requirements**: Changed behavior - MUST include full
+      updated content
+
+      - **REMOVED Requirements**: Deprecated features - MUST include
+      **Reason** and **Migration**
+
+      - **RENAMED Requirements**: Name changes only - use FROM:/TO: format
+
+
+      Format requirements:
+
+      - Each requirement: `### Requirement: <name>` followed by normative
+      text. Use RFC 2119 keywords (MUST, MUST NOT, SHOULD, MAY); one
+      behavior per requirement.
+
+      - Each scenario: `#### Scenario: <name>` with WHEN/THEN bullets.
+
+      - **CRITICAL**: Scenarios MUST use exactly 4 hashtags (`####`). Using
+      3 hashtags or bullets will fail silently.
+
+      - Every requirement MUST have at least one scenario, and failure modes
+      deserve scenarios as much as happy paths.
+
+
+      MODIFIED requirements workflow:
+
+      1. Locate the existing requirement in openspec/specs/<capability>/spec.md
+
+      2. Copy the ENTIRE requirement block (from `### Requirement:` through
+      all scenarios)
+
+      3. Paste under `## MODIFIED Requirements` and edit to reflect new
+      behavior
+
+      4. Ensure header text matches exactly (whitespace-insensitive)
+
+
+      Common pitfall: Using MODIFIED with partial content loses detail at
+      archive time. If adding new concerns without changing existing
+      behavior, use ADDED instead.
+
+
+      Specs must be testable - each scenario is a potential test case.
+    requires:
+      - proposal
+apply:
+  requires:
+    - specs
+  tracks: proposal.md
+  instruction: |
+    Read the proposal and delta specs, implement the change, and check off
+    Definition of Done items in proposal.md as each criterion becomes
+    verifiably true. Pause if you hit blockers or need clarification.

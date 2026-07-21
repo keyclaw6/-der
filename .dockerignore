@@ -1,0 +1,9 @@
+.git/
+node_modules/
+.codebase-memory/
+.env.keys
+.env.keys.*
+__pycache__/
+coverage/
+dist/
+build/

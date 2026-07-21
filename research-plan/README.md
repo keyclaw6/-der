@@ -18,6 +18,11 @@ Stage 1 (architecture) planning record for the der auto-research loop. Produced 
    - `round4_solpro.md` (**external GPT 5.6 Sol Pro review** — RESTRUCTURE verdict that produced v4)
    - `round5_sentry.md` (final gap audit of the v4 integration)
 4. `REVIEW_PROMPT.md` — the mission brief that produced the round-4 external review.
+5. `STAGE2_PROMPT.md` — the mission brief for the Stage 2 implementation-plan author (GPT 5.6 Sol Pro): produces a single downloadable markdown plan, to be committed under `research-plan/plans/` and reviewed before execution.
+
+## Stage 1 approval
+
+Stage 1 (draft_v4) was approved by the owner on 2026-07-21, gating Stage 2 commissioning.
 
 ## Related documents
 

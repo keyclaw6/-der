@@ -4,18 +4,20 @@ Stage 1 (architecture) planning record for the der auto-research loop. Produced 
 
 ## Status
 
-- **Stage 1 (architecture): converged** after 3 adversarial review rounds (6 reviewer agents, 27/27 findings resolved). Under external review; not yet owner-approved.
+- **Stage 1 (architecture): restructured and final-audited.** Rounds 1–3 (internal adversarial: 6 reviewer agents) converged draft_v3; round 4 (external GPT 5.6 Sol Pro review) returned RESTRUCTURE with five approval conditions — all adopted in **draft_v4**; round 5 (gap audit) verified 100% integration, restored four dropped protections, and source-verified the new load-bearing facts. **Awaiting owner approval.**
 - **Stage 2 (implementation plan): not started** — blocked on owner approval of Stage 1.
 
 ## Reading order
 
 1. `context.md` — project context, owner constraints, and source-verified facts about AHE, Qwen Code, and harbor.
-2. `draft_v3.md` — **the architecture under review** (v1 and v2 are retained for history; the convergence log in §10 summarizes what changed and why).
-3. `reviews/` — the six review documents:
+2. `draft_v4.md` — **the architecture awaiting approval** (§9 records the round-4 adopt/retain/reject disposition; §10 is the convergence log; v1–v3 retained for history).
+3. `reviews/` — the eight review documents:
    - `round1_forge.md` (systems/contracts), `round1_prism.md` (source-fidelity audit against AHE/harbor/Qwen Code code), `round1_flint.md` (operations/YAGNI/cost)
    - `round2_vex.md` (red team on round-1 additions), `round2_sage.md` (implementation-readiness)
    - `round3_arbiter.md` (closure audit: resolution matrix + regression sweep)
-4. `REVIEW_PROMPT.md` — the mission brief for the external (GPT 5.6 Sol Pro) architecture review, including the open questions the review should answer.
+   - `round4_solpro.md` (**external GPT 5.6 Sol Pro review** — RESTRUCTURE verdict that produced v4)
+   - `round5_sentry.md` (final gap audit of the v4 integration)
+4. `REVIEW_PROMPT.md` — the mission brief that produced the round-4 external review.
 
 ## Related documents
 

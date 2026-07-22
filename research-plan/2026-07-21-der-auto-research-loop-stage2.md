@@ -56,6 +56,7 @@ The verified Pier CLI surface used by this plan is `pier run --path ... --includ
 6. Generated files are regenerated and compared byte-for-byte in CI. A generated file is never hand-edited.
 7. Every scorecard write uses exclusive creation. A rerun gets a new `run_id`; it never overwrites an existing scorecard.
 8. Every task's final test command must pass before its commit step. A worker who cannot produce the stated observable result stops that task instead of weakening the assertion.
+9. If `ruff check` reports only import-sorting diagnostics (`I001`) on code transcribed from this plan, run `uv run ruff check --fix <same paths>` once and rerun the check; that is transcription repair, not assertion weakening. Any other diagnostic is a real failure to fix by hand.
 
 ## Locked file structure and single responsibilities
 
@@ -533,7 +534,39 @@ Milestone exit: the repository installs reproducibly; every upstream revision is
       """A caller attempted to overwrite immutable evidence."""
 
       exit_code = 5
+
+
+  class ContractError(DerError):
+      """A wire-contract invariant (spec, argv, schema) was violated."""
+
+      exit_code = 6
+
+
+  class EvaluationError(DerError):
+      """The evaluator subprocess or its result protocol failed."""
+
+      exit_code = 7
+
+
+  class ProcessLockError(DerError):
+      """Another der process holds the single evaluation lock."""
+
+      exit_code = 8
+
+
+  class UnevaluatedHarnessError(DerError):
+      """`main:harness` has no adopted scorecard; sync refuses without --force."""
+
+      exit_code = 9
+
+
+  class NoEvaluatedBaselineError(DerError):
+      """No adopted scorecard matches the current `main:harness` tree."""
+
+      exit_code = 10
   ```
+
+  Later tasks (16, 17, 23, 24) import `ContractError`, `EvaluationError`, `ProcessLockError`, `UnevaluatedHarnessError`, and `NoEvaluatedBaselineError` from this module; do not redefine them elsewhere.
 
   Create `research/der/pins.py`:
 
@@ -627,8 +660,10 @@ Milestone exit: the repository installs reproducibly; every upstream revision is
       verification = front["verification"]
       status = front["status"]
       values = front["values"]
-      if not isinstance(verification, str) or not verification.startswith("V"):
-          raise PinFormatError(f"{path}: verification must be V1 through V10")
+      if not isinstance(verification, str) or verification[:1] not in {"V", "M"}:
+          raise PinFormatError(
+              f"{path}: verification must be V1 through V10 or a milestone id such as M1"
+          )
       if expected_verification is not None and verification != expected_verification:
           raise PinFormatError(
               f"{path}: expected {expected_verification}, found {verification}"
@@ -1178,6 +1213,7 @@ Milestone exit: the repository installs reproducibly; every upstream revision is
 - Create: `research/schemas/scorecard.schema.json`
 - Create: `research/schemas/experiment-frontmatter.schema.json`
 - Create: `research/schemas/suite.schema.json`
+- Create: `research/schemas/critic-proposal.schema.json`
 - Create: `tests/contracts/test_eval_contract.py`
 - Create: `tests/contracts/test_experiment_contract.py`
 - Create: `tests/contracts/test_suite_contract.py`
@@ -1947,7 +1983,7 @@ Milestone exit: the repository installs reproducibly; every upstream revision is
 
   from research.der.contracts.base import StrictModel
   from research.der.contracts.eval import EvalResult, EvalSpec, ExperimentId, Sha256
-  from research.der.contracts.experiment import ExperimentFrontMatter, ExperimentContract
+  from research.der.contracts.experiment import ExperimentContract, ExperimentFrontMatter
   from research.der.contracts.scorecard import Scorecard
   from research.der.contracts.suite import SuiteManifest
 
@@ -2610,12 +2646,12 @@ Milestone exit: the repository installs reproducibly; every upstream revision is
 
   import yaml
 
+  from research.der.contracts.eval import RunId
   from research.der.contracts.experiment import (
       ExperimentFrontMatter,
       ExperimentStatus,
       assert_transition,
   )
-  from research.der.contracts.eval import RunId
   from research.der.util.atomic import atomic_replace_bytes, create_exclusive_bytes
 
 
@@ -3306,7 +3342,7 @@ Milestone exit: the repository installs reproducibly; every upstream revision is
 
 # Phase 1 — Milestone 1: one DeepSWE task through Pier, manually
 
-Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen installs offline from the pinned archive; the trial has no provider credential; all model traffic traverses the host proxy and is observed as `deepseek-v4-pro`; the intended Git patch is captured by `pre_artifacts.sh`; the pristine verifier emits evidence; and the machine result agrees with reward, CTRF, patch, logs, and ATIF. A deliberate task failure is classified `failed`, an induced infrastructure failure is classified `invalid`, and V1–V5 pin files all have `status: passed`.
+Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen installs offline from the pinned archive; the trial has no provider credential; all model traffic traverses the host proxy and is observed as `deepseek-v4-pro`; the intended Git patch is captured by `pre_artifacts.sh`; the pristine verifier emits evidence; and the machine result agrees with reward, CTRF, patch, logs, and ATIF. A deliberate task failure is classified `failed`, an induced infrastructure failure is classified `invalid`, and the V1, V2, V3, and V5 pin files all have `status: passed` (V7 passed in Phase 0; V4 belongs to Phase 4).
 
 ### Task 6: V3 Qwen standalone archive discovery in a real DeepSWE image
 
@@ -3333,7 +3369,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
     | grep -E -- '--archive|--prefix|--help' || true
   ```
 
-  The first execution may report that the installer file is absent; Step 4 downloads it. The source/docs output must state that an offline release archive is installed with `--archive PATH` while `SHA256SUMS` is adjacent. Do not infer an asset name or installed binary path.
+  The first execution may report that the installer file is absent; Step 4 downloads it. The source/docs output must state that an offline release archive is installed with `--archive PATH` while `SHA256SUMS` is adjacent. Do not infer an asset name or installed binary path. Only `--archive` is source-verified; `--prefix` is an assumption this task checks. If the installer `--help` shows no `--prefix` flag, that is a flag-shape adaptation inside this discovery task, not a spec contradiction: drop `--prefix` from `offline_install_argv` (and its unit test), run the installer with `HOME=/opt/qwen` so it installs beneath the documented default `~/.local/lib/qwen-code` with the shim at `~/.local/bin/qwen`, keep the `find`-based binary discovery unchanged, and record the actually executed argv in the pin's `install_argv`. Downstream tasks read `install_argv` and `qwen_binary` from the pin, never from this plan text.
 
 - [ ] **Step 2: Write the failing archive-selection tests.** Create `tests/discovery/test_v3_qwen_archive.py`:
 
@@ -3485,7 +3521,56 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
           + "\n```\n"
       )
       atomic_replace_bytes(path, body.encode("utf-8"))
+
+
+  def require_passed_pin(ref: str | Path) -> dict[str, Any]:
+      """Load a pin by verification ID (V1–V10, M1…) or explicit path; require passed.
+
+      Returns the pin's ``values`` mapping so callers can subscript discovered
+      fields directly, e.g. ``require_passed_pin("V3")["archive_sha256"]``.
+      """
+      if isinstance(ref, Path) or "/" in str(ref):
+          pin = load_pin(Path(ref))
+      else:
+          pin = load_pin(PIN_PATHS[str(ref)], expected_verification=str(ref))
+      pin.require_passed()
+      return pin.values
+
+
+  def write_discovery_pin(
+      path: Path,
+      *,
+      verification_id: str,
+      status: Literal["passed", "blocked"],
+      command: str,
+      observation: Mapping[str, Any],
+      stop_reason: str | None = None,
+  ) -> None:
+      """Discovery-script convenience over write_pin.
+
+      ``command`` becomes the transcript; ``observation`` becomes ``values``;
+      ``source_revision`` records this repository's HEAD at observation time.
+      """
+      from research.der.util.git import head_commit
+
+      contradiction: str | None = None
+      if status == "blocked":
+          error = observation.get("error") if isinstance(observation, Mapping) else None
+          contradiction = stop_reason or (str(error) if error else "observation contradicted the spec")
+          if error and stop_reason:
+              contradiction = f"{stop_reason} ({error})"
+      write_pin(
+          path,
+          verification=verification_id,
+          status=status,
+          source_revision=head_commit(Path.cwd()),
+          values=dict(observation),
+          transcript=command,
+          contradiction=contradiction,
+      )
   ```
+
+  Discovery scripts and gate tests from Task 10 onward call `require_passed_pin(...)` (accepting either a `V#`/`M#` id or a pin path and returning the values mapping) and `write_discovery_pin(...)`; both are thin layers over `load_pin`/`write_pin` and exist only in this module.
 
   Also add these imports at the top of `research/der/pins.py`:
 
@@ -3651,11 +3736,11 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
               raise ValueError(f"Qwen source expected {QWEN_COMMIT}, observed {head}")
           v7 = load_pin(args.v7_pin, expected_verification="V7")
           v7.require_passed()
-          audits = v7.require("audited_verifiers")
+          audits = v7.value("audited_verifiers")
           if not isinstance(audits, list) or not audits:
               raise ValueError("V7 audited_verifiers is empty")
           relative = str(audits[0]["relative_path"])
-          task = Path(str(v7.require("task_root"))) / relative
+          task = Path(str(v7.value("task_root"))) / relative
           dockerfiles = sorted((task / "environment").rglob("Dockerfile"))
           if len(dockerfiles) != 1:
               raise ValueError(
@@ -3799,7 +3884,6 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
 ### Task 7: Runtime-shaped harness staging and owner-overlay policy
 
 **Files:**
-- Create: `research/der/harness/__init__.py`
 - Create: `research/der/harness/policy.py`
 - Create: `research/der/harness/stage.py`
 - Create: `tests/harness/test_policy.py`
@@ -4038,29 +4122,10 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
           stage_harness(FIXTURES / "managed", overlay, tmp_path / "dest", tmp_path / "home")
   ```
 
-  Create `tests/golden/staging/staging-manifest.json` with this initial expected content; the deterministic digest strings are updated in Step 7 from the first reviewed test run, never by hand after that:
+  Create `tests/golden/staging/staging-manifest.json` as exactly one canonical-JSON line plus a trailing newline (the manifest is written by `canonical_json_bytes`, which emits compact sorted-key JSON; file entries appear in sorted staged-path order, so `.qwen/settings.json` precedes the skill file). The digests below are the true SHA-256 values of the fixture bytes above; Step 7 re-verifies them independently:
 
   ```json
-  {
-    "files": [
-      {
-        "origin": "managed",
-        "path": ".qwen/skills/der-engineering/SKILL.md",
-        "sha256": "5b998591122d062913ff3c37265e902b15878730b7f7566c2ba2b58717fb076d"
-      },
-      {
-        "origin": "merged",
-        "path": ".qwen/settings.json",
-        "sha256": "d20b51b249ba1814b268078490f0e7b6b7511c38ac39a1b152a34e2b00ad1175"
-      },
-      {
-        "origin": "managed",
-        "path": "QWEN.md",
-        "sha256": "f3b957a1c29a6bc44de44fb4b66fcb1eeeb40e1aeb8be89ec1c609a3f0e46d61"
-      }
-    ],
-    "schema_version": "der.staging-manifest.v1"
-  }
+  {"files":[{"origin":"merged","path":".qwen/settings.json","sha256":"d20b51b249ba1814b268078490f0e7b6b7511c38ac39a1b152a34e2b00ad1175"},{"origin":"managed","path":".qwen/skills/der-engineering/SKILL.md","sha256":"5b998591122d062913ff3c37265e902b15878730b7f7566c2ba2b58717fb076d"},{"origin":"managed","path":"QWEN.md","sha256":"f3b957a1c29a6bc44de44fb4b66fcb1eeeb40e1aeb8be89ec1c609a3f0e46d61"}],"schema_version":"der.staging-manifest.v1"}
   ```
 
 - [ ] **Step 4: Run the staging tests and observe missing modules.** Run:
@@ -4071,7 +4136,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
 
   Expected failure includes `ModuleNotFoundError: No module named 'research.der.harness'`.
 
-- [ ] **Step 5: Implement the recursive managed-namespace policy.** Create an empty `research/der/harness/__init__.py`. Create `research/der/harness/policy.py`:
+- [ ] **Step 5: Implement the recursive managed-namespace policy.** `research/der/harness/__init__.py` already exists from Task 3. Create `research/der/harness/policy.py`:
 
   ```python
   """Fail-closed policy for files that may evolve and later reach the owner machine."""
@@ -4548,11 +4613,11 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
           now=now,
       )
       ledger = BudgetLedger(tmp_path / "budgets")
-      ledger.create(
+      ledger.register_run(
           issued.run_id,
           budget(),
+          now,
           expected_attempts=1,
-          started_at=now,
       )
       provider = provider_app(captured)
       app = create_app(
@@ -4836,7 +4901,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
   from research.der.proxy.budget import BudgetExceededError, BudgetLedger
   from research.der.proxy.observations import ModelObservation, ObservationLog
   from research.der.proxy.policy import ModelPolicy
-  from research.der.proxy.registry import RunRegistry
+  from research.der.proxy.registry import RunRegistration, RunRegistry
 
 
   @dataclass(frozen=True, slots=True)
@@ -4903,7 +4968,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
       async def healthz() -> dict[str, str]:
           return {"status": "ok", "policy_id": policy.policy_id, "model": policy.model}
 
-      def authorize(value: str | None):
+      def authorize(value: str | None) -> RunRegistration:
           if value is None or not value.startswith("Bearer "):
               raise HTTPException(status_code=401, detail="missing bearer run token")
           try:
@@ -4915,7 +4980,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
       async def chat_completions(
           request: Request,
           authorization: str | None = Header(default=None),
-      ):
+      ) -> StreamingResponse | JSONResponse:
           registration = authorize(authorization)
           if registration.policy_id != policy.policy_id:
               raise HTTPException(status_code=403, detail="run token uses another policy")
@@ -4928,7 +4993,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
               raise HTTPException(status_code=400, detail=str(exc)) from exc
           request_id = "req-" + secrets.token_hex(12)
           try:
-              ledger.reserve_request(registration.run_id, request_id, now=now())
+              ledger.authorize_request(registration.run_id, request_id, now())
           except BudgetExceededError as exc:
               raise HTTPException(status_code=429, detail=str(exc)) from exc
           headers = dict(prepared.forward_headers)
@@ -4944,6 +5009,9 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
           response = await client.send(provider_request, stream=True)
 
           async def finalize(data: bytes) -> None:
+              observed_model = "unrecorded"
+              usage = TokenUsage()
+              cost = Decimal("0")
               try:
                   payload = (
                       _stream_payload(data)
@@ -4952,10 +5020,16 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
                   )
                   if not isinstance(payload, dict):
                       raise ValueError("provider response body is not an object")
-                  observed_model = payload.get("model")
-                  if observed_model != policy.model:
+                  if payload.get("model") is not None:
+                      observed_model = str(payload["model"])
+                  if response.status_code >= 400:
                       raise ValueError(
-                          f"provider observed model {observed_model!r}, expected {policy.model!r}"
+                          f"provider returned HTTP {response.status_code}"
+                      )
+                  if payload.get("model") != policy.model:
+                      raise ValueError(
+                          f"provider observed model {payload.get('model')!r}, "
+                          f"expected {policy.model!r}"
                       )
                   usage = _usage(payload)
                   cost = pricing.cost(usage)
@@ -4966,6 +5040,9 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
                       cost_usd=cost,
                       now=now(),
                   )
+              finally:
+                  # Every terminal provider exchange is observed — success or
+                  # fault — so downstream classification never guesses (D5).
                   observations.append(
                       ModelObservation(
                           timestamp=now(),
@@ -4982,7 +5059,6 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
                           response_sha256=hashlib.sha256(data).hexdigest(),
                       )
                   )
-              finally:
                   await response.aclose()
                   await client.aclose()
 
@@ -5801,7 +5877,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
               raise RuntimeError("Qwen process succeeded but stream terminal was not success")
   ```
 
-  This is the exact Pier 0.3.0 contract: `BaseAgent.run(...) -> None`. The agent mutates the supplied `AgentContext` and writes `trajectory.json` under Pier's host-side `logs_dir`; it must never return a private tuple protocol.
+  This is the exact Pier 0.3.0 contract: `BaseAgent.run(...) -> None`. The agent mutates the supplied `AgentContext` and writes `trajectory.json` under Pier's host-side `logs_dir`; it must never return a private tuple protocol. The `setup()` install line mirrors the V3 pin's recorded `install_argv`; if V3 pinned an argv without `--prefix` (see Task 6 Step 1's adaptation note), mirror the pinned argv here instead and point the `find` binary discovery at the pinned install root — the pin, not this listing, is authoritative for the install command.
 
 - [ ] **Step 9: Run the tests; repair only source-contract field mismatches, then lock the fixtures.** Run:
 
@@ -5847,16 +5923,33 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
 - Create as preregistration proof: `experiments/EXP-0001-acceptance-chain.md`
 
 **Interfaces:**
-- Consumes: `stage_harness(source: Path, overlay: Mapping[str, Any], destination: Path) -> StagedHarness`; `DerQwenAgent`; V3 pin fields `archive_path`, `installer_path`, `binary_path`, `task_image_id`; `ProxyRegistry.issue(...) -> RunGrant`
-- Produces: passed pin fields `job_result_path`, `trial_root`, `proxy_base_url`, `proxy_host`, `allowlist_domains`, and eight evidence paths consumed by Tasks 11–13 and every live evaluator task
+- Consumes: `stage_harness(managed_root: Path, owner_overlay_root: Path, destination: Path, rollout_home: Path) -> StagingResult` from Task 7; `DerQwenAgent` from Task 9; V3 pin fields `archive_path`, `installer_path`, `qwen_binary`, `container_image_id`; V7 pin fields `task_root`, `task_ids`; `RunRegistry.issue(...) -> IssuedRunToken` and `BudgetLedger.register_run(...)` from Tasks 5/8; `require_passed_pin`/`write_discovery_pin` from Task 6
+- Produces: passed pin fields `job_result_path`, `trial_root`, `run_id`, `proxy_base_url`, `proxy_host`, `allowlist_domains`, and six evidence paths consumed by Tasks 11–13 and every live evaluator task
 
 - [ ] **Step 1: Add a deterministic proxy process entry point.** Append to `research/der/proxy/app.py`:
 
   ```python
+  def load_policy_and_pricing(policy_path: Path) -> tuple[ModelPolicy, Pricing]:
+      raw = tomllib.loads(policy_path.read_text(encoding="utf-8"))
+      pricing = raw["pricing"]
+      return (
+          ModelPolicy(
+              policy_id=str(raw["policy_id"]),
+              provider=str(raw["provider"]),
+              model=str(raw["model"]),
+          ),
+          Pricing(
+              unit_tokens=int(pricing["unit_tokens"]),
+              cache_hit_input=Decimal(str(pricing["cache_hit_input_per_unit"])),
+              cache_miss_input=Decimal(str(pricing["cache_miss_input_per_unit"])),
+              output=Decimal(str(pricing["output_per_unit"])),
+          ),
+      )
+
+
   def main() -> None:
       import argparse
       import os
-      from pathlib import Path
 
       import uvicorn
 
@@ -5869,12 +5962,16 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
       provider_key = os.environ.get("DEEPSEEK_API_KEY")
       if not provider_key:
           raise SystemExit("DEEPSEEK_API_KEY is absent from the host proxy process")
+      policy, pricing = load_policy_and_pricing(args.policy)
       application = create_app(
-          policy=ProxyPolicy.from_toml(args.policy),
-          provider_key=provider_key,
-          registry=ProxyRegistry(args.state_dir / "registry.sqlite3"),
-          budgets=BudgetLedger(args.state_dir / "budgets.sqlite3"),
+          policy=policy,
+          pricing=pricing,
+          registry=RunRegistry(args.state_dir / "registry"),
+          ledger=BudgetLedger(args.state_dir / "budgets"),
           observations=ObservationLog(args.state_dir / "observations.jsonl"),
+          provider_base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+          provider_api_key=provider_key,
+          now=utc_now,
       )
       uvicorn.run(application, host=args.host, port=args.port, log_level="info")
 
@@ -5883,14 +5980,16 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
       main()
   ```
 
-  Add these imports to the existing module from Task 8 rather than duplicating their definitions:
+  Add these imports to the existing module from Task 8 rather than duplicating any definition (`ModelPolicy`, `Pricing`, `BudgetLedger`, `ObservationLog`, and `RunRegistry` are already imported there; only these are new):
 
   ```python
-  from research.der.proxy.budget import BudgetLedger
-  from research.der.proxy.observations import ObservationLog
-  from research.der.proxy.policy import ProxyPolicy
-  from research.der.proxy.registry import ProxyRegistry
+  import tomllib
+  from pathlib import Path
+
+  from research.der.util.time import utc_now
   ```
+
+  `Decimal` is already imported at module top. The state directory holds `registry/` (per-run JSON registrations), `budgets/` (per-run ledgers), and `observations.jsonl` — the same stores the tests in Task 8 exercised.
 
 - [ ] **Step 2: Write the discovery validator test first.** Create `tests/discovery/test_v2_acceptance_chain.py`:
 
@@ -5909,6 +6008,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
       job = tmp_path / "job"
       trial = job / "trial-1"
       trial.mkdir(parents=True)
+      (job / "result.json").write_text('{"job_id":"v2-probe"}\n')
       (trial / "reward.json").write_text('{"reward":1}\n')
       (trial / "ctrf.json").write_text('{"results":{"summary":{"tests":1}}}\n')
       (trial / "trajectory.json").write_text(
@@ -5921,11 +6021,11 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
       observations.write_text(
           json.dumps(
               {
-                  "experiment_id": "EXP-0001-acceptance-chain",
-                  "job_id": "v2-probe",
-                  "trial_id": "trial-1",
+                  "run_id": "RUN-EXP-0001-acceptance-chain-smoke-01",
+                  "request_id": "req-1",
+                  "role": "rollout",
                   "observed_model": "deepseek-v4-pro",
-                  "status": "completed",
+                  "status_code": 200,
               }
           )
           + "\n"
@@ -5934,8 +6034,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
           job_result_path=job / "result.json",
           job_dir=job,
           observations_path=observations,
-          experiment_id="EXP-0001-acceptance-chain",
-          job_id="v2-probe",
+          run_id="RUN-EXP-0001-acceptance-chain-smoke-01",
           proxy_base_url="http://172.17.0.1:8787/v1",
           allowlist_domains=("172.17.0.1",),
       )
@@ -5951,13 +6050,13 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
 
 
   def test_missing_link_stops_instead_of_guessing(tmp_path: Path) -> None:
+      (tmp_path / "result.json").write_text('{"job_id":"v2-probe"}\n')
       with pytest.raises(ValueError, match="exactly one non-empty reward.json"):
           inspect_acceptance_chain(
               job_result_path=tmp_path / "result.json",
               job_dir=tmp_path,
               observations_path=tmp_path / "observations.jsonl",
-              experiment_id="EXP-0001-acceptance-chain",
-              job_id="v2-probe",
+              run_id="RUN-EXP-0001-acceptance-chain-smoke-01",
               proxy_base_url="http://host.invalid/v1",
               allowlist_domains=("host.invalid",),
           )
@@ -6016,8 +6115,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
       job_result_path: Path,
       job_dir: Path,
       observations_path: Path,
-      experiment_id: str,
-      job_id: str,
+      run_id: str,
       proxy_base_url: str,
       allowlist_domains: tuple[str, ...],
   ) -> dict[str, Any]:
@@ -6045,24 +6143,22 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
           for line in observations_path.read_text(encoding="utf-8").splitlines()
           if line.strip()
       ]
-      selected = [
-          row
-          for row in observations
-          if row.get("experiment_id") == experiment_id and row.get("job_id") == job_id
-      ]
+      selected = [row for row in observations if row.get("run_id") == run_id]
       if not selected:
-          raise ValueError("proxy observation log has no exact experiment/job match")
-      models = sorted({str(row.get("observed_model")) for row in selected})
+          raise ValueError(f"proxy observation log has no rows for run {run_id}")
+      completed = [row for row in selected if row.get("status_code") == 200]
+      if not completed:
+          raise ValueError("proxy recorded no completed (status 200) observation for the run")
+      models = sorted({str(row.get("observed_model")) for row in completed})
       if models != ["deepseek-v4-pro"]:
           raise ValueError(f"proxy observed forbidden model set: {models}")
-      if any(row.get("status") not in {"completed", "stream_completed"} for row in selected):
-          raise ValueError("proxy contains a nonterminal observation for the acceptance run")
       host = urlparse(proxy_base_url).hostname
       if not host or tuple(allowlist_domains) != (host,):
           raise ValueError("allowlist must contain only the concrete proxy host")
       return {
           "job_result_path": str(job_result_path.resolve()),
           "trial_root": str(job_dir.resolve()),
+          "run_id": run_id,
           "proxy_base_url": proxy_base_url,
           "proxy_host": host,
           "allowlist_domains": list(allowlist_domains),
@@ -6079,8 +6175,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
       parser.add_argument("--job-result", type=Path, required=True)
       parser.add_argument("--job-dir", type=Path, required=True)
       parser.add_argument("--observations", type=Path, required=True)
-      parser.add_argument("--experiment-id", required=True)
-      parser.add_argument("--job-id", required=True)
+      parser.add_argument("--run-id", required=True)
       parser.add_argument("--proxy-base-url", required=True)
       parser.add_argument("--allowlist-domain", action="append", required=True)
       parser.add_argument(
@@ -6092,8 +6187,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
               job_result_path=args.job_result,
               job_dir=args.job_dir,
               observations_path=args.observations,
-              experiment_id=args.experiment_id,
-              job_id=args.job_id,
+              run_id=args.run_id,
               proxy_base_url=args.proxy_base_url,
               allowlist_domains=tuple(args.allowlist_domain),
           )
@@ -6132,60 +6226,91 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
 
   Expected output: `2 passed` and no Ruff diagnostics.
 
-- [ ] **Step 6: Create and commit the discovery experiment before issuing a run token.** Create `experiments/EXP-0001-acceptance-chain.md`:
-
-  ```markdown
-  ---
-  schema_version: 1
-  experiment_id: EXP-0001-acceptance-chain
-  status: proposed
-  proposer: owner
-  hypothesis: The approved keyless Qwen-through-proxy Pier path can complete one DeepSWE task and preserve all canonical evidence links.
-  intended_change: No harness hypothesis; this is the scored-path acceptance probe.
-  managed_files: []
-  primary_metric: macro_pass_at_1
-  minimum_effect: 0.0
-  guardrails:
-    observed_model: deepseek-v4-pro
-    invalid_attempts_max: 0
-  falsifier: Any missing acceptance link, provider key in the trial, non-proxy model traffic, or inferred result path falsifies the probe.
-  suite_version: discovery-v1
-  k: 1
-  run_budget:
-    max_usd: 20.0
-    max_input_tokens: 2000000
-    max_output_tokens: 250000
-    max_wall_seconds: 7200
-  baseline_tree_oid: null
-  candidate_tree_oid: null
-  runtime_manifest_digest: null
-  evaluator_job_ids: []
-  scorecard_paths: []
-  created_at: 2026-07-21T00:00:00Z
-  updated_at: 2026-07-21T00:00:00Z
-  ---
-
-  # V2 acceptance-chain discovery
-
-  The generated result block is absent until the finalizer has a complete explicit Pier result.
-  ```
-
-  Validate and commit it before live execution:
+- [ ] **Step 6: Create and commit the discovery experiment before issuing a run token.** Generate `experiments/EXP-0001-acceptance-chain.md` through the strict contract (never hand-write lifecycle YAML), using the real identity of the fixture harness this probe stages:
 
   ```bash
   uv run python - <<'PY'
+  from decimal import Decimal
   from pathlib import Path
-  from research.der.experiments.records import load_record
-  record = load_record(Path("experiments/EXP-0001-acceptance-chain.md"))
-  assert record.experiment_id == "EXP-0001-acceptance-chain"
-  assert record.status.value == "proposed"
-  print(record.experiment_id, record.status.value)
+
+  from research.der.contracts.eval import HarnessIdentity, RunBudget
+  from research.der.contracts.experiment import (
+      ExperimentContract, ExperimentFrontMatter, ExperimentStatus, Guardrail,
+  )
+  from research.der.experiments.records import create_record
+  from research.der.util.git import git_tree_oid, head_commit
+  from research.der.util.hashing import sha256_file
+  from research.der.util.time import utc_now
+
+  now = utc_now()
+  # The probe stages the committed fixture harness (harness/ is created at
+  # Milestone 5); the runtime-manifest digest for this discovery probe is the
+  # digest of the owner policy file, recorded here so identity is re-provable.
+  identity = HarnessIdentity(
+      source_commit=head_commit(Path.cwd()),
+      harness_tree_oid=git_tree_oid(Path.cwd(), Path("tests/fixtures/harness/managed")),
+      runtime_manifest_digest=sha256_file(Path("research/config/runtime-policy.toml")),
+  )
+  front = ExperimentFrontMatter(
+      experiment_id="EXP-0001-acceptance-chain",
+      slug="acceptance-chain",
+      title="V2 acceptance-chain discovery probe",
+      status=ExperimentStatus.PROPOSED,
+      created_at=now,
+      updated_at=now,
+      baseline_identity=identity,
+      candidate_identity=identity,
+      contract=ExperimentContract(
+          hypothesis=(
+              "The approved keyless Qwen-through-proxy Pier path can complete one "
+              "DeepSWE task and preserve all canonical evidence links."
+          ),
+          primary_metric="confirmation_macro_pass_at_1",
+          minimum_effect=Decimal("0"),
+          guardrails=(
+              Guardrail(metric="invalid_fraction", operator="<=", threshold=Decimal("0")),
+          ),
+          falsifier=(
+              "Any missing acceptance link, provider key in the trial, non-proxy "
+              "model traffic, or inferred result path falsifies the probe."
+          ),
+          suite_version="discovery-v1",
+          k=1,
+          budget=RunBudget(
+              max_cost_usd=Decimal("20"),
+              max_wall_seconds=7200,
+              max_attempts=1,
+              max_input_tokens=2_000_000,
+              max_output_tokens=250_000,
+              max_tool_calls=500,
+              max_session_turns=10,
+          ),
+      ),
+      run_ids=(),
+  )
+  body = (
+      "# EXP-0001 — V2 acceptance-chain discovery\n\n"
+      "## Rationale\n\n"
+      "Scored-path acceptance probe; no harness hypothesis. The generated result\n"
+      "block is absent until the finalizer has a complete explicit Pier result.\n\n"
+      "## Evidence links\n\n"
+      "Attached after the run.\n"
+  )
+  create_record(Path("experiments/EXP-0001-acceptance-chain.md"), front, body)
+  print("created")
+  PY
+  uv run python - <<'PY'
+  from pathlib import Path
+  from research.der.experiments.records import read_record
+  record = read_record(Path("experiments/EXP-0001-acceptance-chain.md"))
+  assert record.front_matter.experiment_id == "EXP-0001-acceptance-chain"
+  print(record.front_matter.experiment_id, record.front_matter.status.value)
   PY
   git add experiments/EXP-0001-acceptance-chain.md
   git commit -m "research: preregister Pier acceptance-chain probe"
   ```
 
-  Expected output: `EXP-0001-acceptance-chain proposed` followed by a successful commit.
+  Expected output: `created`, then `EXP-0001-acceptance-chain proposed`, followed by a successful commit. The commit-before-run is the preregistration proof. (`confirmation_macro_pass_at_1` is the schema's contract metric; this probe's decision is recorded as non-promotional in Task 15.)
 
 - [ ] **Step 7: Start the host proxy with the provider key injected only into that process.** The owner creates `~/.config/der/deepseek.env` outside Git with dotenvx and confirms its plaintext expansion is never printed. Run:
 
@@ -6206,14 +6331,14 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
   test "$(cat var/state/proxy/server.pid)" -gt 1
   ```
 
-  Expected health output: `{"status":"ok","model":"deepseek-v4-pro"}`. The shell environment running Pier must satisfy `test -z "${DEEPSEEK_API_KEY-}"`.
+  Expected health output: `{"status":"ok","policy_id":"deepseek-v4-pro-v1","model":"deepseek-v4-pro"}`. The shell environment running Pier must satisfy `test -z "${DEEPSEEK_API_KEY-}"`.
 
 - [ ] **Step 8: Discover a reachable host address without weakening Pier isolation.** Run exactly this probe; it tests three concrete candidates and emits only a winner that reaches `/healthz` from a throwaway container:
 
   ```bash
   TASK_IMAGE=$(uv run python - <<'PY'
   from research.der.pins import require_passed_pin
-  print(require_passed_pin("V3")["task_image_id"])
+  print(require_passed_pin("V3")["container_image_id"])
   PY
   )
   BRIDGE_GATEWAY=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')
@@ -6244,40 +6369,64 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
 
   Expected output: one concrete hostname or IP. This value is provisional until the real Pier run in Step 11 proves it under Pier's filtered network. Do not put it in source code.
 
-- [ ] **Step 9: Stage the harness and issue one short-lived, exact run grant.** Run:
+- [ ] **Step 9: Stage the harness and issue one short-lived, exact run grant.** The probe stages the committed fixture harness (the managed `harness/` tree is created at Milestone 5); the registry and ledger directories are the ones the proxy process from Step 7 reads. Run:
 
   ```bash
   export EXPERIMENT_ID=EXP-0001-acceptance-chain
+  export RUN_ID=RUN-EXP-0001-acceptance-chain-smoke-01
   export JOB_ID=v2-probe
-  export TRIAL_ID=deepswe-v2-1
   export PROXY_HOST=$(cat var/state/proxy/proxy-host)
   export PROXY_BASE_URL="http://${PROXY_HOST}:8787/v1"
-  export STAGED_HARNESS="$PWD/var/staging/${EXPERIMENT_ID}/${TRIAL_ID}/harness"
+  export STAGED_HARNESS="$PWD/var/staging/${RUN_ID}/harness"
+  mkdir -p var/staging/overlay-empty
   export RUN_TOKEN=$(uv run python - <<'PY'
   import os
+  from datetime import timedelta
+  from decimal import Decimal
   from pathlib import Path
-  from research.der.harness.stage import stage_harness
-  from research.der.proxy.registry import ProxyRegistry
 
+  from research.der.contracts.eval import RunBudget
+  from research.der.harness.stage import stage_harness
+  from research.der.proxy.budget import BudgetLedger
+  from research.der.proxy.registry import RunRegistry
+  from research.der.util.time import utc_now
+
+  budget = RunBudget(
+      max_cost_usd=Decimal("20"),
+      max_wall_seconds=7200,
+      max_attempts=1,
+      max_input_tokens=2_000_000,
+      max_output_tokens=250_000,
+      max_tool_calls=500,
+      max_session_turns=10,
+  )
+  run_id = os.environ["RUN_ID"]
+  now = utc_now()
   stage_harness(
-      source=Path("harness"),
-      overlay={},
-      destination=Path(os.environ["STAGED_HARNESS"]),
+      Path("tests/fixtures/harness/managed"),
+      Path("var/staging/overlay-empty"),
+      Path(os.environ["STAGED_HARNESS"]),
+      Path(f"var/staging/{run_id}/rollout-home"),
   )
-  grant = ProxyRegistry(Path("var/state/proxy/registry.sqlite3")).issue(
-      experiment_id=os.environ["EXPERIMENT_ID"],
-      job_id=os.environ["JOB_ID"],
-      trial_id=os.environ["TRIAL_ID"],
-      expires_in_seconds=10800,
+  issued = RunRegistry(Path("var/state/proxy/registry")).issue(
+      run_id=run_id,
+      policy_id="deepseek-v4-pro-v1",
+      budget=budget,
+      expected_attempts=1,
+      expires_at=now + timedelta(hours=3),
+      now=now,
   )
-  print(grant.token)
+  BudgetLedger(Path("var/state/proxy/budgets")).register_run(
+      run_id, budget, now, expected_attempts=1
+  )
+  print(issued.token)
   PY
   )
   test -n "$RUN_TOKEN"
   test -z "${DEEPSEEK_API_KEY-}"
   ```
 
-  Expected output is silent. `RUN_TOKEN` is an expiring proxy credential, not a provider credential.
+  Expected output is silent. `RUN_TOKEN` is an expiring proxy credential, not a provider credential. The Qwen rollout HOME inside the container is selected by `DerQwenAgent`; the host-side `rollout-home` directory exists only to satisfy the staging contract and stays empty.
 
 - [ ] **Step 10: Resolve the pinned task and Qwen archive values from passed pin files.** Run:
 
@@ -6288,11 +6437,11 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
   v3 = require_passed_pin("V3")
   v7 = require_passed_pin("V7")
   values = {
-      "DEEPSWE_PATH": v7["checkout_path"],
-      "TASK_NAME": v7["candidate_task_ids"][0],
+      "DEEPSWE_PATH": v7["task_root"],
+      "TASK_NAME": v7["task_ids"][0],
       "QWEN_ARCHIVE": v3["archive_path"],
       "QWEN_INSTALLER": v3["installer_path"],
-      "QWEN_BINARY": v3["binary_path"],
+      "QWEN_BINARY": v3["qwen_binary"],
   }
   for key, value in values.items():
       print(f"export {key}={shlex.quote(str(value))}")
@@ -6384,13 +6533,12 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
     --job-result "$RESULT_PATH" \
     --job-dir "$JOB_DIR" \
     --observations var/state/proxy/observations.jsonl \
-    --experiment-id "$EXPERIMENT_ID" \
-    --job-id "$JOB_ID" \
+    --run-id "$RUN_ID" \
     --proxy-base-url "$PROXY_BASE_URL" \
     --allowlist-domain "$PROXY_HOST" \
     | tee var/runs/v2/acceptance-inspection.json
   test "${PIPESTATUS[0]}" -eq 0
-  uv run der pin show V2
+  uv run der pins assert V2
   ```
 
   Expected output is a passed V2 pin and JSON containing all six canonical evidence paths, `observed_models: ["deepseek-v4-pro"]`, the exact proxy route, and the explicit Pier result path. Exit 78 is a hard STOP.
@@ -6673,7 +6821,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
   ```bash
   uv run python scripts/discover_v1_pier_artifacts.py | tee var/runs/v2/v1-shape.json
   test "${PIPESTATUS[0]}" -eq 0
-  uv run der pin show V1
+  uv run der pins assert V1
   ```
 
   Expected output records exact relative paths and JSON pointers, including `ATIF-v1.7`. Exit 78 is a hard STOP; no normalizer code is written until resolved by the owner.
@@ -6719,8 +6867,8 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
 - Create outside Git during probe: `var/faults/v5/`
 
 **Interfaces:**
-- Consumes: `AttemptStatus`, `InvalidReason`, and `QwenLimit` contracts; V1 artifact pointers; V2 live-run command and proxy route
-- Produces: `AttemptEvidence` and `classify_attempt(evidence: AttemptEvidence) -> AttemptClassification`; passed V5 pin consumed by Task 14 and live evaluator acceptance
+- Consumes: `OutcomeKind` and `FailureReason` from Task 2's `research.der.contracts.eval`; `QwenLimit` from Task 9; V1 artifact pointers; V2 live-run command and proxy route
+- Produces: `AttemptEvidence`, `AttemptClassification`, and `classify_attempt(evidence: AttemptEvidence) -> AttemptClassification` (all in `research.der.evaluation.classification`); passed V5 pin consumed by Task 14 and live evaluator acceptance
 
 - [ ] **Step 1: Write the taxonomy tests.** Create `tests/evaluation/test_classification.py`:
 
@@ -6729,47 +6877,50 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
 
   import pytest
 
-  from research.der.contracts.eval import AttemptStatus, InvalidReason
+  from research.der.contracts.eval import FailureReason, OutcomeKind
   from research.der.evaluation.classification import AttemptEvidence, classify_attempt
 
 
   @pytest.mark.parametrize(
       ("evidence", "reason"),
       [
-          (AttemptEvidence(proxy_http_status=401), InvalidReason.PROVIDER),
-          (AttemptEvidence(proxy_http_status=503), InvalidReason.PROVIDER),
-          (AttemptEvidence(network_error="connection reset"), InvalidReason.NETWORK),
-          (AttemptEvidence(infrastructure_error="docker daemon died"), InvalidReason.INFRASTRUCTURE),
-          (AttemptEvidence(verifier_malformed=True), InvalidReason.MALFORMED_VERIFIER),
+          (AttemptEvidence(proxy_http_status=401), FailureReason.PROVIDER),
+          (AttemptEvidence(proxy_http_status=503), FailureReason.PROVIDER),
+          (AttemptEvidence(network_error="connection reset"), FailureReason.NETWORK),
+          (AttemptEvidence(infrastructure_error="docker daemon died"), FailureReason.INFRA),
+          (AttemptEvidence(verifier_malformed=True), FailureReason.MALFORMED_VERIFIER),
       ],
   )
   def test_infrastructure_classes_are_invalid(
-      evidence: AttemptEvidence, reason: InvalidReason
+      evidence: AttemptEvidence, reason: FailureReason
   ) -> None:
       result = classify_attempt(evidence)
-      assert result.status is AttemptStatus.INVALID
-      assert result.invalid_reason is reason
+      assert result.status is OutcomeKind.INVALID
+      assert result.failure_reason is reason
       assert result.reward is None
 
 
   @pytest.mark.parametrize("exit_code", [53, 55, 124])
   def test_agent_or_context_limits_are_failed(exit_code: int) -> None:
       result = classify_attempt(AttemptEvidence(qwen_exit_code=exit_code))
-      assert result.status is AttemptStatus.FAILED
+      assert result.status is OutcomeKind.FAILED
       assert result.reward == 0.0
-      assert result.invalid_reason is None
+      assert result.failure_reason in {
+          FailureReason.AGENT_TIMEOUT,
+          FailureReason.CONTEXT_TIMEOUT,
+      }
 
 
   def test_verifier_reward_is_used_only_after_valid_execution() -> None:
-      assert classify_attempt(AttemptEvidence(reward=1.0)).status is AttemptStatus.PASSED
-      assert classify_attempt(AttemptEvidence(reward=0.0)).status is AttemptStatus.FAILED
+      assert classify_attempt(AttemptEvidence(reward=1.0)).status is OutcomeKind.PASSED
+      assert classify_attempt(AttemptEvidence(reward=0.0)).status is OutcomeKind.FAILED
 
 
   def test_invalid_precedence_prevents_imputation() -> None:
       result = classify_attempt(
           AttemptEvidence(proxy_http_status=500, qwen_exit_code=55, reward=0.0)
       )
-      assert result.status is AttemptStatus.INVALID
+      assert result.status is OutcomeKind.INVALID
       assert result.reward is None
   ```
 
@@ -6790,7 +6941,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
 
   from dataclasses import dataclass
 
-  from research.der.contracts.eval import AttemptClassification, AttemptStatus, InvalidReason
+  from research.der.contracts.eval import FailureReason, OutcomeKind
 
 
   @dataclass(frozen=True, slots=True)
@@ -6803,57 +6954,69 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
       qwen_exit_code: int | None = None
 
 
+  @dataclass(frozen=True, slots=True)
+  class AttemptClassification:
+      status: OutcomeKind
+      reward: float | None
+      failure_reason: FailureReason | None
+
+
   def classify_attempt(evidence: AttemptEvidence) -> AttemptClassification:
       if evidence.verifier_malformed:
           return AttemptClassification(
-              status=AttemptStatus.INVALID,
+              status=OutcomeKind.INVALID,
               reward=None,
-              invalid_reason=InvalidReason.MALFORMED_VERIFIER,
+              failure_reason=FailureReason.MALFORMED_VERIFIER,
           )
       if evidence.infrastructure_error:
           return AttemptClassification(
-              status=AttemptStatus.INVALID,
+              status=OutcomeKind.INVALID,
               reward=None,
-              invalid_reason=InvalidReason.INFRASTRUCTURE,
+              failure_reason=FailureReason.INFRA,
           )
       if evidence.network_error:
           return AttemptClassification(
-              status=AttemptStatus.INVALID,
+              status=OutcomeKind.INVALID,
               reward=None,
-              invalid_reason=InvalidReason.NETWORK,
+              failure_reason=FailureReason.NETWORK,
           )
       if evidence.proxy_http_status is not None and evidence.proxy_http_status >= 400:
           return AttemptClassification(
-              status=AttemptStatus.INVALID,
+              status=OutcomeKind.INVALID,
               reward=None,
-              invalid_reason=InvalidReason.PROVIDER,
+              failure_reason=FailureReason.PROVIDER,
           )
       if evidence.qwen_exit_code in {53, 55, 124}:
+          reason = (
+              FailureReason.CONTEXT_TIMEOUT
+              if evidence.qwen_exit_code == 124
+              else FailureReason.AGENT_TIMEOUT
+          )
           return AttemptClassification(
-              status=AttemptStatus.FAILED,
+              status=OutcomeKind.FAILED,
               reward=0.0,
-              invalid_reason=None,
+              failure_reason=reason,
           )
       if evidence.reward == 1.0:
           return AttemptClassification(
-              status=AttemptStatus.PASSED,
+              status=OutcomeKind.PASSED,
               reward=1.0,
-              invalid_reason=None,
+              failure_reason=None,
           )
       if evidence.reward == 0.0:
           return AttemptClassification(
-              status=AttemptStatus.FAILED,
+              status=OutcomeKind.FAILED,
               reward=0.0,
-              invalid_reason=None,
+              failure_reason=FailureReason.TASK_ASSERTION,
           )
       return AttemptClassification(
-          status=AttemptStatus.INVALID,
+          status=OutcomeKind.INVALID,
           reward=None,
-          invalid_reason=InvalidReason.INCOMPLETE_RESULT,
+          failure_reason=FailureReason.INFRA,
       )
   ```
 
-  Use the exact enum members defined in Task 2. If Task 2 names the incomplete-result member `MISSING_RESULT`, use that exact name here and in the test; do not add a synonym.
+  These are exactly Task 2's enum members (`OutcomeKind`, `FailureReason`); do not add synonym enums. An attempt with no usable evidence at all (no reward, no fault signal) is an incomplete result and classifies as `INVALID`/`INFRA` — never as reward zero.
 
 - [ ] **Step 4: Run the taxonomy tests to green.** Run:
 
@@ -7031,7 +7194,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
   ```bash
   uv run python scripts/discover_v5_faults.py --rows var/faults/v5/rows.json
   test "$?" -eq 0
-  uv run der pin show V5
+  uv run der pins assert V5
   ```
 
   Expected output: passed V5. Any invalid row with reward `0.0` or timeout row marked invalid is a STOP.
@@ -7094,7 +7257,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
   uv run pytest tests/integration/test_milestone1_acceptance.py -q
   ```
 
-  Expected output is `3 passed`. `DiscoveryBlocked` is a phase STOP, not a test to skip.
+  Expected output is `3 passed`. A `DiscoveryBlockedError` is a phase STOP, not a test to skip.
 
 - [ ] **Step 3: Record exact pass/fail/invalid evidence in the milestone pin.** Create `research-plan/pins/milestone1-acceptance.md` through `write_discovery_pin`, with `verification_id: M1`, `status: passed`, the exact command from Step 2, and observation fields:
 
@@ -7142,17 +7305,20 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
   ```bash
   uv run python - <<'PY'
   from pathlib import Path
+  from research.der.contracts.experiment import ExperimentStatus
   from research.der.experiments.records import transition_record
+  from research.der.util.time import utc_now
   transition_record(
       Path("experiments/EXP-0001-acceptance-chain.md"),
-      target="running",
-      evaluator_job_id="v2-probe",
+      target=ExperimentStatus.RUNNING,
+      now=utc_now(),
+      append_run_id="RUN-EXP-0001-acceptance-chain-smoke-01",
   )
   PY
   git diff -- experiments/EXP-0001-acceptance-chain.md
   ```
 
-  Expected diff changes only status, updated timestamp, and evaluator job IDs. Result attachment remains a later finalizer responsibility.
+  Expected diff changes only `status`, `updated_at`, and `run_ids`. Result attachment remains a later responsibility (Task 15 attaches the scorecard; the finalizer owns this from Task 28 on).
 
 - [ ] **Step 5: Run the whole phase's offline tests.** Run:
 
@@ -7193,6 +7359,7 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
 - Create: `research/der/evaluation/artifact_manifest.py`
 - Create: `tests/evaluation/test_normalizer.py`
 - Create: `tests/evaluation/test_artifact_manifest.py`
+- Create: `tests/fixtures/contracts/eval-spec.json`
 - Create: `tests/fixtures/pier/v0.3.0/pass/`
 - Create: `tests/fixtures/pier/v0.3.0/fail/`
 - Create: `tests/fixtures/pier/v0.3.0/invalid/`
@@ -7203,7 +7370,7 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
 - Consumes: `EvalSpec`; passed V1 field/path pin; exact Pier result path; V2 proxy observations; `classify_attempt(AttemptEvidence) -> AttemptClassification`
 - Produces: `normalize_pier_result(spec: EvalSpec, exact_result_path: Path, v1: Mapping[str, Any], observations_path: Path) -> EvalResult`; `build_artifact_manifest(paths: Mapping[str, Path]) -> dict[str, Sha256]`
 
-- [ ] **Step 1: Extend V1 once, before writing the normalizer, to include every identity field it needs.** Modify `scripts/discover_v1_pier_artifacts.py` so the passed observation also records `trial_result_file`, and unique JSON pointers for `trial_name`, `task_name`, `attempt_index`, `started_at`, `finished_at`, `agent_exit_code`, and `trial_status`. Find candidates by exact leaf names present in the live JSON; if a semantic field has zero or multiple candidates, write V1 as blocked and exit 78. Do not derive these fields from modification times or directory recency.
+- [ ] **Step 1: Extend V1 once, before writing the normalizer, to include every identity field it needs.** Modify `scripts/discover_v1_pier_artifacts.py` so the passed observation also records these exact value keys, which the normalizer below reads verbatim: `trial_result_file`, `trial_name_pointer`, `task_name_pointer` (already present), `attempt_pointer` (already present), `started_at_pointer`, `finished_at_pointer`, `agent_exit_code_pointer`, and `trial_status_pointer`. Find candidates by exact leaf names present in the live JSON; if a semantic field has zero or multiple candidates, write V1 as blocked and exit 78. Do not derive these fields from modification times or directory recency.
 
   Add this helper and use it for each semantic field:
 
@@ -7392,6 +7559,7 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
   from __future__ import annotations
 
   import json
+  import tomllib
   from collections import defaultdict
   from collections.abc import Mapping
   from datetime import datetime
@@ -7410,6 +7578,7 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
       TokenUsage,
   )
   from research.der.evaluation.artifact_manifest import build_artifact_manifest
+  from research.der.evaluation.classification import AttemptEvidence, classify_attempt
 
 
   def _read_json(path: Path) -> Any:
@@ -7427,20 +7596,35 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
       return current
 
 
-  def _observation_rows(
-      path: Path, *, experiment_id: str, job_id: str, trial_id: str
-  ) -> list[dict[str, Any]]:
+  def _observation_rows(path: Path, *, run_id: str) -> list[dict[str, Any]]:
       rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-      selected = [
-          row
-          for row in rows
-          if row.get("experiment_id") == experiment_id
-          and row.get("job_id") == job_id
-          and row.get("trial_id") == trial_id
-      ]
+      selected = [row for row in rows if row.get("run_id") == run_id]
       if not selected:
-          raise ValueError(f"no exact proxy observations for {experiment_id}/{job_id}/{trial_id}")
+          raise ValueError(f"no exact proxy observations for run {run_id}")
       return selected
+
+
+  def _load_pricing() -> tuple[int, Decimal, Decimal, Decimal]:
+      """(unit_tokens, cache_hit_input, cache_miss_input, output) from the one policy file."""
+      raw = tomllib.loads(
+          Path("research/config/runtime-policy.toml").read_text(encoding="utf-8")
+      )["pricing"]
+      return (
+          int(raw["unit_tokens"]),
+          Decimal(str(raw["cache_hit_input_per_unit"])),
+          Decimal(str(raw["cache_miss_input_per_unit"])),
+          Decimal(str(raw["output_per_unit"])),
+      )
+
+
+  def _usage_cost(usage: TokenUsage) -> Decimal:
+      unit, cache_hit, cache_miss, output = _load_pricing()
+      uncached = max(usage.input_tokens - usage.cache_tokens, 0)
+      return (
+          Decimal(usage.cache_tokens) * cache_hit
+          + Decimal(uncached) * cache_miss
+          + Decimal(usage.output_tokens) * output
+      ) / Decimal(unit)
 
 
   def _usage(trajectory: dict[str, Any], pin: Mapping[str, Any]) -> TokenUsage:
@@ -7462,22 +7646,31 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
       )
 
 
-  def _failure(
-      *, reward: Decimal | None, exit_code: int, observations: list[dict[str, Any]]
+  def _classify(
+      *,
+      reward: Decimal | None,
+      exit_code: int,
+      rows: list[dict[str, Any]],
+      attempts_total: int,
   ) -> tuple[OutcomeKind, FailureReason | None, Decimal | None]:
-      error_statuses = [int(row["provider_status"]) for row in observations if row.get("provider_status")]
-      if any(status >= 400 for status in error_statuses):
-          return OutcomeKind.INVALID, FailureReason.PROVIDER, None
-      if any(row.get("status") in {"network_error", "upstream_disconnect"} for row in observations):
-          return OutcomeKind.INVALID, FailureReason.NETWORK, None
-      if exit_code in {53, 55, 124}:
-          reason = FailureReason.AGENT_TIMEOUT if exit_code != 124 else FailureReason.CONTEXT_TIMEOUT
-          return OutcomeKind.FAILED, reason, Decimal("0")
-      if reward == Decimal("1"):
-          return OutcomeKind.PASSED, None, reward
-      if reward == Decimal("0"):
-          return OutcomeKind.FAILED, FailureReason.TASK_ASSERTION, reward
-      return OutcomeKind.INVALID, FailureReason.MALFORMED_VERIFIER, None
+      provider_status = next(
+          (int(row["status_code"]) for row in rows if int(row.get("status_code", 0)) >= 400),
+          None,
+      )
+      if provider_status is not None and attempts_total > 1 and reward is not None:
+          # The observation log is run-scoped; with several attempts in the run,
+          # a fault row cannot be attributed to an attempt that produced a valid
+          # binary reward. Never invalidate on unattributable evidence.
+          provider_status = None
+      cls = classify_attempt(
+          AttemptEvidence(
+              reward=float(reward) if reward is not None else None,
+              proxy_http_status=provider_status,
+              qwen_exit_code=exit_code,
+          )
+      )
+      normalized = Decimal(str(cls.reward)) if cls.reward is not None else None
+      return cls.status, cls.failure_reason, normalized
 
 
   def normalize_pier_result(
@@ -7496,8 +7689,18 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
           raise ValueError(
               f"expected {len(spec.task_ids) * spec.k} reward files; observed {len(reward_paths)}"
           )
+      rows = _observation_rows(observations_path, run_id=spec.run_id)
+      completed_rows = [row for row in rows if int(row.get("status_code", 0)) == 200]
+      if not completed_rows:
+          raise ValueError(
+              f"proxy log has no completed (status 200) observation for run {spec.run_id}; "
+              "the run is invalid — do not normalize partial evidence"
+          )
+      observed_models = {str(row["observed_model"]) for row in completed_rows}
+      if observed_models != {"deepseek-v4-pro"}:
+          raise ValueError(f"proxy model assertion failed: {sorted(observed_models)}")
+      attempts_total = len(spec.task_ids) * spec.k
       grouped: dict[str, list[AttemptOutcome]] = defaultdict(list)
-      observed_models: set[str] = set()
       started: list[datetime] = []
       finished: list[datetime] = []
       job_artifacts: dict[str, Path] = {"pier_job_result": exact_result_path}
@@ -7519,20 +7722,11 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
               raise ValueError(f"unexpected task in Pier result: {task_id}")
           reward_value = _pointer(reward_payload, str(v1["reward_pointer"]))
           reward = Decimal(str(reward_value)) if reward_value in {0, 1, 0.0, 1.0} else None
-          rows = _observation_rows(
-              observations_path,
-              experiment_id=spec.experiment_id,
-              job_id=str(job_payload["job_id"]),
-              trial_id=trial_name,
-          )
-          models = {str(row["observed_model"]) for row in rows}
-          if models != {"deepseek-v4-pro"}:
-              raise ValueError(f"proxy model assertion failed for {trial_name}: {models}")
-          observed_models |= models
           exit_code = int(_pointer(trial, str(v1["agent_exit_code_pointer"])))
-          outcome, reason, normalized_reward = _failure(
-              reward=reward, exit_code=exit_code, observations=rows
+          outcome, reason, normalized_reward = _classify(
+              reward=reward, exit_code=exit_code, rows=rows, attempts_total=attempts_total
           )
+          usage = _usage(trajectory, v1)
           started_at = datetime.fromisoformat(
               str(_pointer(trial, str(v1["started_at_pointer"]))).replace("Z", "+00:00")
           )
@@ -7561,11 +7755,8 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
                   failure_reason=reason,
                   reward=normalized_reward,
                   metrics={"pier_trial_status": str(_pointer(trial, str(v1["trial_status_pointer"])))},
-                  usage=_usage(trajectory, v1),
-                  cost_usd=sum(
-                      (Decimal(str(row.get("cost_usd", "0"))) for row in rows),
-                      Decimal("0"),
-                  ),
+                  usage=usage,
+                  cost_usd=_usage_cost(usage),
                   artifact_digests=build_artifact_manifest(artifacts),
               )
           )
@@ -7574,6 +7765,12 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
           attempts = tuple(sorted(grouped[task_id], key=lambda item: item.attempt_index))
           if len(attempts) != spec.k:
               raise ValueError(f"task {task_id} does not have exactly k attempts")
+          # The contract index is zero-based and contiguous; Pier's raw attempt
+          # numbering (possibly 1-based) stays visible in trial_name/trial_dir.
+          attempts = tuple(
+              attempt.model_copy(update={"attempt_index": position})
+              for position, attempt in enumerate(attempts)
+          )
           passed = sum(item.outcome is OutcomeKind.PASSED for item in attempts)
           tasks.append(
               TaskResult(
@@ -7603,7 +7800,10 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
               output_tokens=sum(a.usage.output_tokens for a in all_attempts),
               tool_calls=sum(a.usage.tool_calls for a in all_attempts),
               wall_seconds=Decimal(str((max(finished) - min(started)).total_seconds())),
-              cost_usd=sum((a.cost_usd for a in all_attempts), Decimal("0")),
+              cost_usd=sum(
+                  (Decimal(str(row.get("cost_usd", "0"))) for row in completed_rows),
+                  Decimal("0"),
+              ),
           ),
           artifact_digests=build_artifact_manifest(job_artifacts),
           started_at=min(started),
@@ -7611,9 +7811,65 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
       )
   ```
 
-  Replace the one direct `job_payload["job_id"]` only if V1 records a different exact job-ID pointer; then use that pin field. Do not search other job directories.
+  Replace the one direct `job_payload["job_id"]` only if V1 records a different exact job-ID pointer; then use that pin field. Do not search other job directories. Evidence honesty note: per-attempt `cost_usd` is derived from that attempt's ATIF usage at the pinned policy prices (the proxy's run-scoped log cannot attribute dollars to one attempt), while `resources.cost_usd` is the proxy-observed run total from completed observation rows — the two are cross-checkable but intentionally sourced differently, and the proxy-observed number is the one the watchdog trusts.
 
-- [ ] **Step 7: Populate sanitized pass/fail/invalid/malformed fixtures from the real V2/V5 artifacts.** Copy the smallest complete trial closure for each case, preserving relative file names from V1. Sanitize only secrets and free text; do not alter status, reward, identity, timestamps, usage, task/attempt indexes, or schema fields. Generate `tests/golden/scorecards/v2-normalized-result.json` by running the normalizer once against the sanitized pass fixture and reviewing every field against its source artifact:
+- [ ] **Step 7: Create the shared spec fixture, then populate sanitized pass/fail/invalid/malformed fixtures from the real V2/V5 artifacts.** First write `tests/fixtures/contracts/eval-spec.json` — the strict spec every normalizer/pier-command test loads. Generate it through the contract so it can never drift from the schema, using the live task ID recorded by V7:
+
+  ```bash
+  uv run python - <<'PY'
+  from decimal import Decimal
+  from pathlib import Path
+
+  from research.der.contracts.base import canonical_json_bytes
+  from research.der.contracts.eval import (
+      DiscoveryPinPaths, EvalSpec, HarnessIdentity, RunBudget,
+  )
+  from research.der.pins import require_passed_pin
+
+  v7 = require_passed_pin("V7")
+  task_id = v7["task_ids"][0]
+  spec = EvalSpec(
+      experiment_id="EXP-0001-acceptance-chain",
+      run_id="RUN-EXP-0001-acceptance-chain-smoke-01",
+      identity=HarnessIdentity(
+          source_commit="a" * 40,
+          harness_tree_oid="b" * 40,
+          runtime_manifest_digest="c" * 64,
+      ),
+      baseline_tree_oid="b" * 40,
+      suite_version="discovery-v1",
+      suite_class="smoke",
+      task_root=Path("/var/cache/der/sources/deep-swe"),
+      task_revisions={task_id: v7["task_checksums"][task_id]},
+      task_ids=(task_id,),
+      k=1,
+      n_concurrent=1,
+      jobs_dir=Path("var/pier/jobs"),
+      staged_harness_dir=Path("var/staging/RUN-EXP-0001-acceptance-chain-smoke-01/harness"),
+      pins=DiscoveryPinPaths(
+          pier_artifacts=Path("research-plan/pins/v1-pier-artifact-layout.md"),
+          proxy_route=Path("research-plan/pins/v2-acceptance-chain.md"),
+          qwen_archive=Path("research-plan/pins/v3-qwen-archive-install.md"),
+      ),
+      model_policy_id="deepseek-v4-pro-v1",
+      budget=RunBudget(
+          max_cost_usd=Decimal("20"),
+          max_wall_seconds=7200,
+          max_attempts=1,
+          max_input_tokens=2_000_000,
+          max_output_tokens=250_000,
+          max_tool_calls=500,
+          max_session_turns=10,
+      ),
+  )
+  out = Path("tests/fixtures/contracts/eval-spec.json")
+  out.parent.mkdir(parents=True, exist_ok=True)
+  out.write_bytes(canonical_json_bytes(spec))
+  print(out, task_id)
+  PY
+  ```
+
+  The fixture identity digests are fixture values; the normalizer copies `spec.identity` verbatim and never verifies it against Git (identity verification is the finalizer's job). Then copy the smallest complete trial closure for each case, preserving relative file names from V1. Sanitize only secrets and free text; do not alter status, reward, identity, timestamps, usage, task/attempt indexes, or schema fields. Each fixture directory's `observations.jsonl` holds that case's proxy rows in the Task 8 `ModelObservation` shape with `run_id` rewritten to the spec fixture's `RUN-EXP-0001-acceptance-chain-smoke-01` (identity alignment, recorded in the fixture README line, is the one permitted rewrite). The `invalid` fixture must contain at least one `status_code: 200` row with `observed_model: deepseek-v4-pro` plus one `status_code: 503` row, and its `reward.json` value at the V1 reward pointer must be non-binary (`null`) so classification exercises the provider branch rather than a task assertion. Generate `tests/golden/scorecards/v2-normalized-result.json` by running the normalizer once against the sanitized pass fixture and reviewing every field against its source artifact:
 
   ```bash
   uv run python - <<'PY'
@@ -7648,7 +7904,73 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
 
   Expected output: all tests pass and static checks are clean.
 
-- [ ] **Step 9: Normalize the actual V2 job and compare its field paths to the golden contract.** Run:
+- [ ] **Step 9: Normalize the actual V2 job and compare its field paths to the golden contract.** First materialize the spec that describes the live V2 run — its identity is the real fixture-harness tree plus a runtime manifest assembled entirely from pins and locked revisions:
+
+  ```bash
+  uv run python - <<'PY'
+  from decimal import Decimal
+  from pathlib import Path
+
+  from research.der.contracts.base import canonical_json_bytes
+  from research.der.contracts.eval import (
+      DiscoveryPinPaths, EvalSpec, RunBudget, RuntimeManifest,
+  )
+  from research.der.harness.identity import compute_identity
+  from research.der.pins import require_passed_pin
+  from research.der.util.git import head_commit
+  from research.der.util.hashing import sha256_file
+
+  v3 = require_passed_pin("V3")
+  v7 = require_passed_pin("V7")
+  task_id = v7["task_ids"][0]
+  manifest = RuntimeManifest(
+      pier_commit="e69a20e4e0ac073ec71fde0274bab3d9f40bac87",
+      deep_swe_commit=v7["deep_swe_commit"],
+      task_revisions={task_id: v7["task_checksums"][task_id]},
+      qwen_archive_sha256=v3["archive_sha256"],
+      der_agent_revision=head_commit(Path.cwd()),
+      proxy_policy_id="deepseek-v4-pro-v1",
+      qwen_system_policy_sha256=sha256_file(Path("research/config/runtime-policy.toml")),
+  )
+  identity = compute_identity(
+      Path.cwd(), Path("tests/fixtures/harness/managed"), manifest
+  )
+  spec = EvalSpec(
+      experiment_id="EXP-0001-acceptance-chain",
+      run_id="RUN-EXP-0001-acceptance-chain-smoke-01",
+      identity=identity,
+      baseline_tree_oid=identity.harness_tree_oid,
+      suite_version="discovery-v1",
+      suite_class="smoke",
+      task_root=Path(v7["task_root"]),
+      task_revisions={task_id: v7["task_checksums"][task_id]},
+      task_ids=(task_id,),
+      k=1,
+      n_concurrent=1,
+      jobs_dir=Path("var/runs/v2"),
+      staged_harness_dir=Path("var/staging/RUN-EXP-0001-acceptance-chain-smoke-01/harness"),
+      pins=DiscoveryPinPaths(
+          pier_artifacts=Path("research-plan/pins/v1-pier-artifact-layout.md"),
+          proxy_route=Path("research-plan/pins/v2-acceptance-chain.md"),
+          qwen_archive=Path("research-plan/pins/v3-qwen-archive-install.md"),
+      ),
+      model_policy_id="deepseek-v4-pro-v1",
+      budget=RunBudget(
+          max_cost_usd=Decimal("20"),
+          max_wall_seconds=7200,
+          max_attempts=1,
+          max_input_tokens=2_000_000,
+          max_output_tokens=250_000,
+          max_tool_calls=500,
+          max_session_turns=10,
+      ),
+  )
+  Path("var/runs/v2/eval-spec.json").write_bytes(canonical_json_bytes(spec))
+  print("spec", identity.harness_tree_oid)
+  PY
+  ```
+
+  Then normalize the live job against it:
 
   ```bash
   uv run python - <<'PY'
@@ -7683,6 +8005,7 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
     research/der/evaluation/normalizer.py \
     research/der/evaluation/artifact_manifest.py \
     tests/evaluation \
+    tests/fixtures/contracts/eval-spec.json \
     tests/fixtures/pier/v0.3.0 \
     tests/golden/scorecards/v2-normalized-result.json
   git commit -m "feat: normalize pinned Pier evidence strictly"
@@ -7693,15 +8016,98 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
 **Files:**
 - Create: `research/der/evaluation/scorecard_writer.py`
 - Create: `tests/evaluation/test_scorecard_writer.py`
-- Create: `research/runs/EXP-0001-acceptance-chain/RUN-EXP-0001-acceptance-chain-candidate-01/scorecard.json`
-- Create: `research/runs/EXP-0001-acceptance-chain/RUN-EXP-0001-acceptance-chain-candidate-01/evidence-trace.md`
+- Create: `tests/fixtures/contracts/scorecard.json`
+- Modify: `research/der/experiments/records.py`
+- Create: `research/runs/EXP-0001-acceptance-chain/RUN-EXP-0001-acceptance-chain-smoke-01/scorecard.json`
+- Create: `research/runs/EXP-0001-acceptance-chain/RUN-EXP-0001-acceptance-chain-smoke-01/evidence-trace.md`
 - Modify: `experiments/EXP-0001-acceptance-chain.md`
 
 **Interfaces:**
 - Consumes: `Scorecard`; `canonical_json_bytes`; normalized V2 `EvalResult`; exact lifecycle record digest
-- Produces: `write_scorecard_once(path: Path, scorecard: Scorecard) -> str`; immutable scorecard SHA-256 consumed by baseline, finalizer, publication, and adoption tasks
+- Produces: `write_scorecard_once(path: Path, scorecard: Scorecard) -> str`; `attach_scorecard(record_path: Path, scorecard_path: Path) -> None` in `research.der.experiments.records`; immutable scorecard SHA-256 consumed by baseline, finalizer, publication, and adoption tasks
 
-- [ ] **Step 1: Write immutable-write tests.** Create `tests/evaluation/test_scorecard_writer.py`:
+- [ ] **Step 1: Create the scorecard contract fixture, then write immutable-write tests.** Generate `tests/fixtures/contracts/scorecard.json` through the models so it cannot drift from the schema (fixture-only identities; the eval-result payload reuses the committed eval-spec fixture's identifiers):
+
+  ```bash
+  uv run python - <<'PY'
+  from datetime import UTC, datetime
+  from decimal import Decimal
+  from pathlib import Path
+
+  from research.der.contracts.base import canonical_json_bytes
+  from research.der.contracts.eval import (
+      AttemptOutcome, EvalResult, HarnessIdentity, OutcomeKind, ResourceTotals,
+      TaskResult, TokenUsage,
+  )
+  from research.der.contracts.scorecard import (
+      ComparabilityStatus, PromotionDecision, PromotionVerdict, Scorecard,
+  )
+
+  now = datetime(2026, 7, 21, tzinfo=UTC)
+  identity = HarnessIdentity(
+      source_commit="a" * 40,
+      harness_tree_oid="b" * 40,
+      runtime_manifest_digest="c" * 64,
+  )
+  attempt = AttemptOutcome(
+      task_id="fixture-task",
+      attempt_index=0,
+      trial_name="fixture-task__1",
+      trial_dir=Path("trial"),
+      outcome=OutcomeKind.PASSED,
+      failure_reason=None,
+      reward=Decimal("1"),
+      metrics={"pier_trial_status": "completed"},
+      usage=TokenUsage(input_tokens=10, cache_tokens=2, output_tokens=3),
+      cost_usd=Decimal("0.01"),
+      artifact_digests={"reward": "d" * 64},
+  )
+  result = EvalResult(
+      experiment_id="EXP-0001-acceptance-chain",
+      run_id="RUN-EXP-0001-acceptance-chain-smoke-01",
+      evaluator="datacurve-pier",
+      evaluator_version="0.3.0",
+      evaluator_job_id="fixture-job",
+      exact_result_path=Path("var/runs/v2/job/result.json"),
+      identity=identity,
+      suite_version="discovery-v1",
+      suite_class="smoke",
+      k=1,
+      model_policy_id="deepseek-v4-pro-v1",
+      observed_models=("deepseek-v4-pro",),
+      tasks=(TaskResult(task_id="fixture-task", attempts=(attempt,), pass_fraction=Decimal("1")),),
+      resources=ResourceTotals(input_tokens=10, cache_tokens=2, output_tokens=3, cost_usd=Decimal("0.01")),
+      artifact_digests={"pier_job_result": "e" * 64},
+      started_at=now,
+      finished_at=now,
+  )
+  scorecard = Scorecard(
+      created_at=now,
+      experiment_record_sha256="f" * 64,
+      baseline_identity=identity,
+      candidate_identity=identity,
+      result=result,
+      decision=PromotionDecision(
+          verdict=PromotionVerdict.INCONCLUSIVE,
+          primary_metric="confirmation_macro_pass_at_1",
+          baseline_value=None,
+          candidate_value=None,
+          observed_effect=None,
+          minimum_effect=Decimal("0"),
+          guardrail_results={"discovery_only": True},
+          comparability=ComparabilityStatus.INCOMPARABLE,
+          reasons=("Fixture scorecard for writer tests.",),
+      ),
+      secret_scrub_sha256="0" * 64,
+  )
+  out = Path("tests/fixtures/contracts/scorecard.json")
+  out.parent.mkdir(parents=True, exist_ok=True)
+  out.write_bytes(canonical_json_bytes(scorecard))
+  print(out)
+  PY
+  ```
+
+  Then create `tests/evaluation/test_scorecard_writer.py`:
 
   ```python
   from __future__ import annotations
@@ -7789,10 +8195,10 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
 
   Expected output: `2 passed`.
 
-- [ ] **Step 5: Hand-trace every V2 scorecard field before writing it.** Create `research/runs/EXP-0001-acceptance-chain/RUN-EXP-0001-acceptance-chain-candidate-01/evidence-trace.md` with this table populated from V1/V2 and the actual normalized result:
+- [ ] **Step 5: Hand-trace every V2 scorecard field before writing it.** Create `research/runs/EXP-0001-acceptance-chain/RUN-EXP-0001-acceptance-chain-smoke-01/evidence-trace.md` with this table populated from V1/V2 and the actual normalized result:
 
   ```markdown
-  # Evidence trace — RUN-EXP-0001-acceptance-chain-candidate-01
+  # Evidence trace — RUN-EXP-0001-acceptance-chain-smoke-01
 
   | Scorecard field | Canonical source | Exact pointer/path | Digest check |
   |---|---|---|---|
@@ -7802,9 +8208,9 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
   | result.tasks[].attempts[].metrics | DeepSWE CTRF + Pier result | V1 CTRF summary/status pointers | matched |
   | result.tasks[].attempts[].usage | Pier ATIF v1.7 | V1 usage pointers | matched |
   | result.tasks[].attempts[].artifact_digests.patch | `pre_artifacts.sh` patch | explicit trial patch path | matched |
-  | result.observed_models | proxy observation log | exact experiment/job/trial rows | `deepseek-v4-pro` only |
-  | result.resources.cost_usd | proxy observation log | sum of exact request rows | matched |
-  | candidate_identity.harness_tree_oid | Git | `git rev-parse HEAD:harness` | matched |
+  | result.observed_models | proxy observation log | completed (status 200) rows for the exact run_id | `deepseek-v4-pro` only |
+  | result.resources.cost_usd | proxy observation log | sum of completed rows for the exact run_id | matched |
+  | candidate_identity.harness_tree_oid | Git | `git_tree_oid` over the staged fixture harness | matched |
   | candidate_identity.runtime_manifest_digest | runtime manifest | canonical JSON SHA-256 | matched |
   ```
 
@@ -7814,7 +8220,6 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
 
   ```bash
   uv run python - <<'PY'
-  import json
   from datetime import UTC, datetime
   from decimal import Decimal
   from pathlib import Path
@@ -7823,12 +8228,14 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
       ComparabilityStatus, PromotionDecision, PromotionVerdict, Scorecard,
   )
   from research.der.evaluation.scorecard_writer import write_scorecard_once
-  from research.der.harness.identity import current_identity
   from research.der.util.hashing import sha256_file
 
-  run_dir = Path("research/runs/EXP-0001-acceptance-chain/RUN-EXP-0001-acceptance-chain-candidate-01")
+  run_dir = Path("research/runs/EXP-0001-acceptance-chain/RUN-EXP-0001-acceptance-chain-smoke-01")
+  run_dir.mkdir(parents=True, exist_ok=True)
   result = EvalResult.model_validate_json(Path("var/runs/v2/eval-result.json").read_text())
-  identity = current_identity(Path.cwd(), Path("harness"))
+  # The evaluated identity is the one the run actually carried (Task 14 Step 9
+  # computed it from the staged fixture harness and the pinned runtime manifest).
+  identity = result.identity
   record = Path("experiments/EXP-0001-acceptance-chain.md")
   scrub_report = run_dir / "secret-scrub.json"
   scrub_report.write_text('{"status":"passed","matches":[]}\n')
@@ -7858,24 +8265,52 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
 
   Expected output: one 64-character digest. A second execution must fail with `immutable scorecard already exists`.
 
-- [ ] **Step 7: Attach the exact scorecard path to the lifecycle record through its transition API.** Run:
+- [ ] **Step 7: Attach the exact scorecard path to the lifecycle record through its record API.** First add `attach_scorecard` to `research/der/experiments/records.py` (this module owns every lifecycle rewrite; the README generator arrives at Milestone 7, so evidence attachment is a body append under `## Evidence links`):
+
+  ```python
+  def attach_scorecard(record_path: Path, scorecard_path: Path) -> None:
+      """Append the exact scorecard path and digest under '## Evidence links'."""
+      from research.der.util.hashing import sha256_file
+
+      current = read_record(record_path)
+      line = f"- scorecard: `{scorecard_path.as_posix()}` (sha256 `{sha256_file(scorecard_path)}`)\n"
+      if line in current.body:
+          return
+      heading = "## Evidence links"
+      if heading in current.body:
+          head, _, tail = current.body.partition(heading)
+          tail_lines = tail.lstrip("\n")
+          body = f"{head}{heading}\n\n{line}{tail_lines}"
+      else:
+          body = current.body.rstrip("\n") + f"\n\n{heading}\n\n{line}"
+      updated = ExperimentRecord(
+          path=current.path, front_matter=current.front_matter, body=body
+      )
+      atomic_replace_bytes(record_path, updated.render().encode("utf-8"))
+  ```
+
+  Then attach and set the terminal state:
 
   ```bash
   uv run python - <<'PY'
   from pathlib import Path
+  from research.der.contracts.experiment import ExperimentStatus
   from research.der.experiments.records import attach_scorecard, transition_record
+  from research.der.util.time import utc_now
   record = Path("experiments/EXP-0001-acceptance-chain.md")
-  scorecard = Path("research/runs/EXP-0001-acceptance-chain/RUN-EXP-0001-acceptance-chain-candidate-01/scorecard.json")
+  scorecard = Path("research/runs/EXP-0001-acceptance-chain/RUN-EXP-0001-acceptance-chain-smoke-01/scorecard.json")
   attach_scorecard(record, scorecard)
   transition_record(
       record,
-      target="inconclusive",
+      target=ExperimentStatus.INCONCLUSIVE,
+      now=utc_now(),
       terminal_reason="Acceptance probe passed; it was not a promotion comparison.",
   )
   PY
+  git diff -- experiments/EXP-0001-acceptance-chain.md
   ```
 
-  Expected diff includes the exact scorecard path, generated result block, terminal reason, and status only.
+  Expected diff includes the exact scorecard path and digest under `## Evidence links`, plus `status`, `updated_at`, and `terminal_reason` only.
 
 - [ ] **Step 8: Run the Milestone 2 acceptance checks.** Run:
 
@@ -7884,11 +8319,11 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
   uv run python - <<'PY'
   import json
   from pathlib import Path
-  scorecard = Path("research/runs/EXP-0001-acceptance-chain/RUN-EXP-0001-acceptance-chain-candidate-01/scorecard.json")
+  scorecard = Path("research/runs/EXP-0001-acceptance-chain/RUN-EXP-0001-acceptance-chain-smoke-01/scorecard.json")
   payload = json.loads(scorecard.read_text())
   assert payload["result"]["observed_models"] == ["deepseek-v4-pro"]
   assert Path(payload["result"]["exact_result_path"]).is_file()
-  assert Path("research/runs/EXP-0001-acceptance-chain/RUN-EXP-0001-acceptance-chain-candidate-01/evidence-trace.md").read_text().rstrip().endswith("Trace result: passed")
+  assert Path("research/runs/EXP-0001-acceptance-chain/RUN-EXP-0001-acceptance-chain-smoke-01/evidence-trace.md").read_text().rstrip().endswith("Trace result: passed")
   print("M2 passed")
   PY
   ```
@@ -7900,7 +8335,9 @@ Milestone exit: the real V2 Pier job normalizes strictly into `EvalResult`; ever
   ```bash
   git add \
     research/der/evaluation/scorecard_writer.py \
+    research/der/experiments/records.py \
     tests/evaluation/test_scorecard_writer.py \
+    tests/fixtures/contracts/scorecard.json \
     research/runs/EXP-0001-acceptance-chain \
     experiments/EXP-0001-acceptance-chain.md
   git commit -m "feat: write immutable scorecards with traced evidence"
@@ -7920,9 +8357,9 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
 
 **Interfaces:**
 - Consumes: `EvalSpec` from `research.der.contracts.eval`; passed V1–V3 pin files.
-- Produces: `build_pier_argv(spec: EvalSpec, *, agent_import_path: str, model_name: str, run_token: str) -> tuple[str, ...]`; `PierExecution`; `run_pier(argv: tuple[str, ...], *, cwd: Path, timeout_seconds: int, stdout_path: Path) -> PierExecution`.
+- Produces: `build_pier_argv(spec: EvalSpec, *, agent_import_path: str, model_name: str, run_token: str, proxy_base_url: str, qwen_archive: str, qwen_installer: str, qwen_binary: str) -> tuple[str, ...]`; `PierExecution`; `run_pier(argv: tuple[str, ...], *, cwd: Path, timeout_seconds: int, stdout_path: Path) -> PierExecution`.
 
-- [ ] **Step 1: Write the exact flag-translation test.** Create `tests/evaluation/test_pier_command.py`:
+- [ ] **Step 1: Write the exact flag-translation test.** The agent kwargs must be exactly the `DerQwenAgent` constructor keywords Task 9 defined and Task 10 proved live (`qwen_archive`, `qwen_installer`, `qwen_binary`, `managed_harness`, `owner_settings_json`, `qwen_environment_json`, `max_session_turns`, `max_wall_time`, `max_tool_calls`). Create `tests/evaluation/test_pier_command.py`:
 
   ```python
   import json
@@ -7930,6 +8367,11 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
 
   from research.der.contracts.eval import EvalSpec
   from research.der.evaluation.pier_command import build_pier_argv
+
+
+  def _kwargs(argv: tuple[str, ...]) -> dict[str, str]:
+      pairs = [argv[i + 1] for i, item in enumerate(argv) if item == "--agent-kwarg"]
+      return dict(pair.split("=", 1) for pair in pairs)
 
 
   def test_build_pier_argv_is_exact_and_contains_no_secret(tmp_path: Path) -> None:
@@ -7941,8 +8383,12 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
           agent_import_path="research.der.agents.qwen:DerQwenAgent",
           model_name="deepseek-v4-pro",
           run_token="run-token-fixture",
+          proxy_base_url="http://172.17.0.1:8787/v1",
+          qwen_archive="/cache/qwen.tar.gz",
+          qwen_installer="/cache/install.sh",
+          qwen_binary="/opt/qwen/bin/qwen",
       )
-      assert argv == (
+      assert argv[: argv.index("--agent-kwarg")] == (
           "pier", "run",
           "--job-name", spec.run_id,
           "--jobs-dir", str(spec.jobs_dir),
@@ -7954,15 +8400,25 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
           "--env", "docker",
           "--agent-import-path", "research.der.agents.qwen:DerQwenAgent",
           "--model", "deepseek-v4-pro",
-          "--agent-kwarg", f"staged_harness_dir={spec.staged_harness_dir}",
-          "--agent-kwarg", "run_token=run-token-fixture",
-          "--agent-kwarg", f"proxy_pin={spec.pins.proxy_route}",
-          "--agent-kwarg", f"archive_pin={spec.pins.qwen_archive}",
-          "--yes",
       )
+      assert argv[-1] == "--yes"
+      kwargs = _kwargs(argv)
+      assert kwargs["managed_harness"] == str(spec.staged_harness_dir)
+      assert kwargs["qwen_archive"] == "/cache/qwen.tar.gz"
+      assert kwargs["qwen_installer"] == "/cache/install.sh"
+      assert kwargs["qwen_binary"] == "/opt/qwen/bin/qwen"
+      assert kwargs["max_session_turns"] == str(spec.budget.max_session_turns)
+      assert kwargs["max_tool_calls"] == str(spec.budget.max_tool_calls)
+      assert kwargs["max_wall_time"] == "120m"
+      environment = json.loads(kwargs["qwen_environment_json"])
+      assert environment["OPENAI_API_KEY"] == "run-token-fixture"
+      assert environment["OPENAI_BASE_URL"] == "http://172.17.0.1:8787/v1"
+      settings = json.loads(kwargs["owner_settings_json"])
+      assert settings["model"]["name"] == "deepseek-v4-pro"
       assert "DEEPSEEK_API_KEY" not in " ".join(argv)
-      assert "OPENAI_API_KEY" not in " ".join(argv)
   ```
+
+  (`120m` is the fixture budget's `max_wall_seconds=7200` expressed in whole minutes.)
 
 - [ ] **Step 2: Run the test and observe the intended import failure.** Run `uv run pytest tests/evaluation/test_pier_command.py -q`. Expected failure contains `ModuleNotFoundError: No module named 'research.der.evaluation.pier_command'`.
 
@@ -7971,8 +8427,50 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
   ```python
   """Pure translation from the der evaluation contract to Pier v0.3.0 flags."""
 
+  import json
+  import math
+  from urllib.parse import urlparse
+
   from research.der.contracts.eval import EvalSpec
   from research.der.errors import ContractError
+
+
+  def _owner_settings_json(proxy_base_url: str, model_name: str) -> str:
+      return json.dumps(
+          {
+              "modelProviders": {
+                  "openai": {
+                      "protocol": "openai",
+                      "models": [
+                          {
+                              "id": model_name,
+                              "name": f"{model_name} through der proxy",
+                              "baseUrl": proxy_base_url,
+                              "envKey": "OPENAI_API_KEY",
+                          }
+                      ],
+                  }
+              },
+              "security": {"auth": {"selectedType": "openai"}},
+              "model": {"name": model_name},
+              "general": {"enableAutoUpdate": False},
+          },
+          separators=(",", ":"),
+          sort_keys=True,
+      )
+
+
+  def _qwen_environment_json(proxy_base_url: str, model_name: str, run_token: str) -> str:
+      return json.dumps(
+          {
+              "OPENAI_API_KEY": run_token,
+              "OPENAI_BASE_URL": proxy_base_url,
+              "OPENAI_MODEL": model_name,
+              "QWEN_CODE_SUPPRESS_YOLO_WARNING": "1",
+          },
+          separators=(",", ":"),
+          sort_keys=True,
+      )
 
 
   def build_pier_argv(
@@ -7981,11 +8479,17 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
       agent_import_path: str,
       model_name: str,
       run_token: str,
+      proxy_base_url: str,
+      qwen_archive: str,
+      qwen_installer: str,
+      qwen_binary: str,
   ) -> tuple[str, ...]:
       if model_name != "deepseek-v4-pro":
           raise ContractError("Pier model must be deepseek-v4-pro")
       if not run_token or any(ch.isspace() for ch in run_token):
           raise ContractError("run_token must be a nonempty, whitespace-free value")
+      if not urlparse(proxy_base_url).hostname:
+          raise ContractError(f"proxy_base_url has no hostname: {proxy_base_url}")
       argv: list[str] = [
           "pier", "run",
           "--job-name", spec.run_id,
@@ -7994,6 +8498,7 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
       ]
       for task_id in spec.task_ids:
           argv.extend(("--include-task-name", task_id))
+      wall_minutes = math.ceil(spec.budget.max_wall_seconds / 60)
       argv.extend((
           "--n-attempts", str(spec.k),
           "--n-concurrent", str(spec.n_concurrent),
@@ -8001,16 +8506,25 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
           "--env", spec.environment,
           "--agent-import-path", agent_import_path,
           "--model", model_name,
-          "--agent-kwarg", f"staged_harness_dir={spec.staged_harness_dir}",
-          "--agent-kwarg", f"run_token={run_token}",
-          "--agent-kwarg", f"proxy_pin={spec.pins.proxy_route}",
-          "--agent-kwarg", f"archive_pin={spec.pins.qwen_archive}",
+          "--agent-kwarg", f"qwen_archive={qwen_archive}",
+          "--agent-kwarg", f"qwen_installer={qwen_installer}",
+          "--agent-kwarg", f"qwen_binary={qwen_binary}",
+          "--agent-kwarg", f"managed_harness={spec.staged_harness_dir}",
+          "--agent-kwarg",
+          f"owner_settings_json={_owner_settings_json(proxy_base_url, model_name)}",
+          "--agent-kwarg",
+          f"qwen_environment_json={_qwen_environment_json(proxy_base_url, model_name, run_token)}",
+          "--agent-kwarg", f"max_session_turns={spec.budget.max_session_turns}",
+          "--agent-kwarg", f"max_wall_time={wall_minutes}m",
+          "--agent-kwarg", f"max_tool_calls={spec.budget.max_tool_calls}",
           "--yes",
       ))
       return tuple(argv)
   ```
 
-- [ ] **Step 4: Make the translator test cover multiple tasks and pass.** Add a second test that copies the fixture with `task_ids=("task-a", "task-b")` and matching revisions, then asserts two ordered `--include-task-name` pairs. Run `uv run pytest tests/evaluation/test_pier_command.py -q`; expected output is `2 passed`.
+  This is the exact command family Task 10 executed by hand; the run token appears only inside `qwen_environment_json` (an expiring proxy credential), never a provider credential.
+
+- [ ] **Step 4: Make the translator test cover multiple tasks and pass.** Add a second test that copies the fixture with `task_ids=("task-a", "task-b")` and matching revisions (and `budget.max_attempts=2`), then asserts two ordered `--include-task-name` pairs. Run `uv run pytest tests/evaluation/test_pier_command.py -q`; expected output is `2 passed`.
 
 - [ ] **Step 5: Write process-protocol tests.** Create `tests/evaluation/test_process.py`:
 
@@ -8178,8 +8692,9 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
       normalizer: Callable[..., EvalResult] = normalize_pier_result
 
       def run(self, spec: EvalSpec) -> EvalResult:
-          for path in (spec.pins.pier_artifacts, spec.pins.proxy_route, spec.pins.qwen_archive):
-              require_passed_pin(path)
+          v1 = require_passed_pin(spec.pins.pier_artifacts)
+          v2 = require_passed_pin(spec.pins.proxy_route)
+          v3 = require_passed_pin(spec.pins.qwen_archive)
           lock_path = self.repo_root / "var/locks/evaluator.lock"
           with process_lock(lock_path, {"experiment_id": spec.experiment_id, "run_id": spec.run_id}):
               token = self.token_issuer.issue(
@@ -8193,6 +8708,10 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
                       agent_import_path="research.der.agents.qwen:DerQwenAgent",
                       model_name="deepseek-v4-pro",
                       run_token=token,
+                      proxy_base_url=str(v2["proxy_base_url"]),
+                      qwen_archive=str(v3["archive_path"]),
+                      qwen_installer=str(v3["installer_path"]),
+                      qwen_binary=str(v3["qwen_binary"]),
                   )
                   execution = self.process(
                       argv,
@@ -8203,11 +8722,14 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
                   return self.normalizer(
                       spec=spec,
                       exact_result_path=execution.exact_result_path,
-                      proxy_observations=self.repo_root / "var/proxy/observations.jsonl",
+                      v1=v1,
+                      observations_path=self.repo_root / "var/state/proxy/observations.jsonl",
                   )
               finally:
                   self.token_issuer.revoke(token)
   ```
+
+  The token issuer is a thin adapter over Task 8's `RunRegistry`/`BudgetLedger`: `issue(...)` registers the run in both stores (policy `deepseek-v4-pro-v1`, `expected_attempts = len(spec.task_ids) * spec.k`, expiry `now + max_wall_seconds + 1h`) and returns the plaintext token; `revoke(token)` deletes the registration file so the token dies with the run. Write it in `runner.py` as `RegistryTokenIssuer` with exactly that behavior and unit-test it with `tmp_path` stores.
 
 - [ ] **Step 5: Write doctor tests before implementation.** Test that `run_doctor(repo_root)` reports named checks for Python, `uv`, Docker, Pier version, four required passed pins, suite disjointness, proxy health, dedicated-worktree status, free disk, and absence of provider keys in a supplied container environment. A failed check makes `ok=False`; no check may be silently skipped.
 
@@ -8245,78 +8767,270 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
 
 **Files:**
 - Create: `experiments/EXP-0002-integration-battery.md`
-- Create: `research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-candidate-01/eval-spec.json`
-- Create: `research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-candidate-01/eval-result.json`
-- Create: `research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-candidate-01/scorecard.json`
+- Create: `research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-smoke-01/eval-spec.json`
+- Create: `research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-smoke-01/eval-result.json`
+- Create: `research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-smoke-01/scorecard.json`
 - Test: live acceptance commands in this task
 
 **Interfaces:**
-- Consumes: V7 candidate task IDs/checksums; `der experiment create`; `der harness stage`; `der eval run`; immutable scorecard writer.
-- Produces: the first multi-task exact-path scorecard and evidence proving one shared evaluator path.
+- Consumes: V7 audited task IDs/checksums; `create_record`/`transition_record`/`attach_scorecard`; `stage_harness`; `der eval run`; `write_scorecard_once`.
+- Produces: the first multi-task exact-path scorecard and evidence proving one shared evaluator path. (The one-command `der experiment finalize` door arrives with the finalizer in Task 28; this milestone composes the same primitives explicitly.)
 
 - [ ] **Step 1: Select exactly four audited tasks from V7 without inventing names.** Run:
 
   ```bash
   uv run python - <<'PY'
-  import json, re
+  import json
   from pathlib import Path
-  text = Path("research-plan/pins/v7-deepswe-revisions.md").read_text()
-  m = re.search(r"```json\n(.*?)\n```", text, re.S)
-  assert m, "V7 pin lacks its machine-readable JSON block"
-  data = json.loads(m.group(1))
-  audited = [row for row in data["tasks"] if row["verifier_audit"] == "passed"]
-  assert len(audited) >= 4, "STOP: fewer than four audited tasks; exit 78 and escalate V7 evidence"
+  from research.der.pins import require_passed_pin
+  v7 = require_passed_pin("V7")
+  audited = v7["audited_verifiers"]
+  assert len(audited) >= 4, "STOP: fewer than four audited tasks; escalate V7 evidence"
   chosen = audited[:4]
-  Path("var/integration-tasks.json").parent.mkdir(parents=True, exist_ok=True)
+  Path("var").mkdir(exist_ok=True)
   Path("var/integration-tasks.json").write_text(json.dumps(chosen, indent=2) + "\n")
   print("\n".join(row["task_id"] for row in chosen))
   PY
   ```
 
-  Expected: four distinct task IDs. If the assertion fires, run `printf 'status: blocked\nreason: fewer than four audited tasks\n' >> research-plan/pins/v7-deepswe-revisions.md`, exit `78`, and stop.
+  Expected: four distinct task IDs. If the assertion fires, write a blocked amendment pin via `write_discovery_pin` (verification `V7`, `status: blocked`, the failing count in the observation), exit `78`, and stop.
 
-- [ ] **Step 2: Preregister before staging or execution.** Run `uv run der experiment create --id EXP-0002-integration-battery --title "Shared-evaluator integration battery" --suite development --suite-version integration-v0 --tasks-json var/integration-tasks.json --k 1 --primary-metric macro_pass_at_1 --minimum-effect 0 --guardrail invalid_fraction=0 --falsifier "Any missing exact result path, any model other than deepseek-v4-pro, or any unclassified attempt" --max-cost-usd 80 --max-wall-seconds 7200 --max-attempts 4 --max-input-tokens 1200000 --max-output-tokens 240000 --max-tool-calls 1200 --max-session-turns 40`.
+- [ ] **Step 2: Preregister before staging or execution.** Generate the record through the contract (same pattern as Task 10 Step 6 — identity is the fixture harness this battery stages):
 
-  Expected: creates `experiments/EXP-0002-integration-battery.md` with status `preregistered`. Verify its creation timestamp precedes all run artifacts using `git diff -- experiments/EXP-0002-integration-battery.md`.
+  ```bash
+  uv run python - <<'PY'
+  from decimal import Decimal
+  from pathlib import Path
+
+  from research.der.contracts.eval import HarnessIdentity, RunBudget
+  from research.der.contracts.experiment import (
+      ExperimentContract, ExperimentFrontMatter, ExperimentStatus, Guardrail,
+  )
+  from research.der.experiments.records import create_record
+  from research.der.util.git import git_tree_oid, head_commit
+  from research.der.util.hashing import sha256_file
+  from research.der.util.time import utc_now
+
+  now = utc_now()
+  identity = HarnessIdentity(
+      source_commit=head_commit(Path.cwd()),
+      harness_tree_oid=git_tree_oid(Path.cwd(), Path("tests/fixtures/harness/managed")),
+      runtime_manifest_digest=sha256_file(Path("research/config/runtime-policy.toml")),
+  )
+  front = ExperimentFrontMatter(
+      experiment_id="EXP-0002-integration-battery",
+      slug="integration-battery",
+      title="Shared-evaluator integration battery",
+      status=ExperimentStatus.PROPOSED,
+      created_at=now,
+      updated_at=now,
+      baseline_identity=identity,
+      candidate_identity=identity,
+      contract=ExperimentContract(
+          hypothesis=(
+              "The shared EvalRunner door completes four DeepSWE tasks with exact "
+              "result association, correct classification, and full artifact collection."
+          ),
+          primary_metric="confirmation_macro_pass_at_1",
+          minimum_effect=Decimal("0"),
+          guardrails=(
+              Guardrail(metric="invalid_fraction", operator="<=", threshold=Decimal("0")),
+          ),
+          falsifier=(
+              "Any missing exact result path, any model other than deepseek-v4-pro, "
+              "or any unclassified attempt falsifies the battery."
+          ),
+          suite_version="integration-v0",
+          k=1,
+          budget=RunBudget(
+              max_cost_usd=Decimal("80"),
+              max_wall_seconds=7200,
+              max_attempts=4,
+              max_input_tokens=1_200_000,
+              max_output_tokens=240_000,
+              max_tool_calls=1200,
+              max_session_turns=40,
+          ),
+      ),
+      run_ids=(),
+  )
+  body = (
+      "# EXP-0002 — Shared-evaluator integration battery\n\n"
+      "## Rationale\n\n"
+      "Milestone-3 seam proof on four V7-audited tasks; no baseline comparison.\n\n"
+      "## Evidence links\n\n"
+      "Attached after the run.\n"
+  )
+  create_record(Path("experiments/EXP-0002-integration-battery.md"), front, body)
+  print("created")
+  PY
+  git add experiments/EXP-0002-integration-battery.md
+  git commit -m "research: preregister the integration battery"
+  ```
+
+  Expected: `created`, then a commit whose timestamp precedes all run artifacts (the preregistration proof).
 
 - [ ] **Step 3: Stage and emit the strict spec.** Run:
 
   ```bash
+  export RUN_ID=RUN-EXP-0002-integration-battery-smoke-01
   export DER_LIVE=1
-  uv run der harness stage \
-    --experiment EXP-0002-integration-battery \
-    --run RUN-EXP-0002-integration-battery-candidate-01 \
-    --source harness \
-    --destination var/staging/RUN-EXP-0002-integration-battery-candidate-01
-  uv run der eval spec-from-record \
-    --record experiments/EXP-0002-integration-battery.md \
-    --run-id RUN-EXP-0002-integration-battery-candidate-01 \
-    --staged-harness var/staging/RUN-EXP-0002-integration-battery-candidate-01 \
-    --jobs-dir var/pier/jobs \
-    --output research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-candidate-01/eval-spec.json
+  uv run python - <<'PY'
+  import json
+  import os
+  from decimal import Decimal
+  from pathlib import Path
+
+  from research.der.contracts.base import canonical_json_bytes
+  from research.der.contracts.eval import DiscoveryPinPaths, EvalSpec, RunBudget
+  from research.der.experiments.records import read_record
+  from research.der.harness.stage import stage_harness
+  from research.der.pins import require_passed_pin
+
+  run_id = os.environ["RUN_ID"]
+  record = read_record(Path("experiments/EXP-0002-integration-battery.md"))
+  chosen = json.loads(Path("var/integration-tasks.json").read_text())
+  v7 = require_passed_pin("V7")
+  staged = Path(f"var/staging/{run_id}/harness")
+  Path("var/staging/overlay-empty").mkdir(parents=True, exist_ok=True)
+  stage_harness(
+      Path("tests/fixtures/harness/managed"),
+      Path("var/staging/overlay-empty"),
+      staged,
+      Path(f"var/staging/{run_id}/rollout-home"),
+  )
+  spec = EvalSpec(
+      experiment_id=record.front_matter.experiment_id,
+      run_id=run_id,
+      identity=record.front_matter.candidate_identity,
+      baseline_tree_oid=record.front_matter.baseline_identity.harness_tree_oid,
+      suite_version=record.front_matter.contract.suite_version,
+      suite_class="smoke",
+      task_root=Path(v7["task_root"]),
+      task_revisions={row["task_id"]: v7["task_checksums"][row["task_id"]] for row in chosen},
+      task_ids=tuple(row["task_id"] for row in chosen),
+      k=record.front_matter.contract.k,
+      n_concurrent=2,
+      jobs_dir=Path("var/pier/jobs"),
+      staged_harness_dir=staged,
+      pins=DiscoveryPinPaths(
+          pier_artifacts=Path("research-plan/pins/v1-pier-artifact-layout.md"),
+          proxy_route=Path("research-plan/pins/v2-acceptance-chain.md"),
+          qwen_archive=Path("research-plan/pins/v3-qwen-archive-install.md"),
+      ),
+      model_policy_id="deepseek-v4-pro-v1",
+      budget=record.front_matter.contract.budget,
+  )
+  out = Path(f"research/runs/EXP-0002-integration-battery/{run_id}/eval-spec.json")
+  out.parent.mkdir(parents=True, exist_ok=True)
+  out.write_bytes(canonical_json_bytes(spec))
+  print("eval-spec valid", len(spec.task_ids), "tasks")
+  PY
   ```
 
-  Expected: policy scan prints `request_shaping_keys=0 executable_keys=0`; schema validation prints `eval-spec valid`.
+  Expected: `eval-spec valid 4 tasks` (`n_concurrent=2` is the conservative pre-V10 setting; Task 19 pins the supported range). The staging call itself enforces the request-shaping/executable deny policy and fails loudly on a violation.
 
-- [ ] **Step 4: Execute through the owner door only.** Run:
+- [ ] **Step 4: Execute through the owner door only.** The proxy from Task 10 Step 7 must be healthy, and the evaluator shell must hold no provider key — only the proxy process does:
 
   ```bash
-  dotenvx run -f "$DER_DOTENVX_FILE" -- \
-    uv run der eval run \
-      --spec research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-candidate-01/eval-spec.json \
-      --output research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-candidate-01/eval-result.json \
-    2>&1 | tee research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-candidate-01/owner-eval.log
+  curl -fsS http://127.0.0.1:8787/healthz
+  test -z "${DEEPSEEK_API_KEY-}"
+  uv run python - <<'PY'
+  from pathlib import Path
+  from research.der.contracts.experiment import ExperimentStatus
+  from research.der.experiments.records import transition_record
+  from research.der.util.time import utc_now
+  transition_record(
+      Path("experiments/EXP-0002-integration-battery.md"),
+      target=ExperimentStatus.RUNNING,
+      now=utc_now(),
+      append_run_id="RUN-EXP-0002-integration-battery-smoke-01",
+  )
+  PY
+  uv run der eval run \
+    --spec research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-smoke-01/eval-spec.json \
+    --output research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-smoke-01/eval-result.json \
+    2>&1 | tee research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-smoke-01/owner-eval.log
   ```
 
   Expected: exactly one `exact_result_path=` line; Pier reports four tasks and one attempt each; proxy observations contain only `deepseek-v4-pro`; no provider credential appears in the log.
 
-- [ ] **Step 5: Finalize the discovery comparison as inconclusive, not adopted.** Run `uv run der experiment finalize --record experiments/EXP-0002-integration-battery.md --result .../eval-result.json --decision inconclusive --reason "Integration battery proves the seam; it has no baseline comparison."`. Expected: exclusive `scorecard.json`, lifecycle status `inconclusive`, generated README block updated once.
+- [ ] **Step 5: Record the battery as inconclusive, not adopted.** Compose the same primitives Task 15 proved (the one-command finalizer door is built in Task 28):
+
+  ```bash
+  uv run python - <<'PY'
+  from datetime import UTC, datetime
+  from decimal import Decimal
+  from pathlib import Path
+  from research.der.contracts.eval import EvalResult
+  from research.der.contracts.experiment import ExperimentStatus
+  from research.der.contracts.scorecard import (
+      ComparabilityStatus, PromotionDecision, PromotionVerdict, Scorecard,
+  )
+  from research.der.evaluation.scorecard_writer import write_scorecard_once
+  from research.der.experiments.records import attach_scorecard, transition_record
+  from research.der.util.hashing import sha256_file
+  from research.der.util.time import utc_now
+
+  run_dir = Path("research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-smoke-01")
+  result = EvalResult.model_validate_json((run_dir / "eval-result.json").read_text())
+  record = Path("experiments/EXP-0002-integration-battery.md")
+  scrub = run_dir / "secret-scrub.json"
+  scrub.write_text('{"status":"passed","matches":[]}\n')
+  scorecard = Scorecard(
+      created_at=datetime.now(UTC),
+      experiment_record_sha256=sha256_file(record),
+      baseline_identity=result.identity,
+      candidate_identity=result.identity,
+      result=result,
+      decision=PromotionDecision(
+          verdict=PromotionVerdict.INCONCLUSIVE,
+          primary_metric="confirmation_macro_pass_at_1",
+          baseline_value=None,
+          candidate_value=None,
+          observed_effect=None,
+          minimum_effect=Decimal("0"),
+          guardrail_results={"invalid_fraction<=0": all(
+              attempt.outcome.value != "invalid"
+              for task in result.tasks for attempt in task.attempts
+          )},
+          comparability=ComparabilityStatus.INCOMPARABLE,
+          reasons=("Integration battery proves the seam; it has no baseline comparison.",),
+      ),
+      secret_scrub_sha256=sha256_file(scrub),
+  )
+  print(write_scorecard_once(run_dir / "scorecard.json", scorecard))
+  attach_scorecard(record, run_dir / "scorecard.json")
+  transition_record(
+      record,
+      target=ExperimentStatus.INCONCLUSIVE,
+      now=utc_now(),
+      terminal_reason="Integration battery proves the seam; it has no baseline comparison.",
+  )
+  PY
+  ```
+
+  Expected: one 64-character digest; lifecycle status `inconclusive` with the scorecard attached under `## Evidence links`.
 
 - [ ] **Step 6: Verify the milestone invariants.** Run:
 
   ```bash
-  uv run der scorecard verify research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-candidate-01/scorecard.json
-  test "$(grep -c '^exact_result_path=' research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-candidate-01/owner-eval.log)" -eq 1
+  uv run python - <<'PY'
+  from pathlib import Path
+  from research.der.contracts.scorecard import Scorecard
+  from research.der.evaluation.scorecard_writer import write_scorecard_once
+  path = Path("research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-smoke-01/scorecard.json")
+  card = Scorecard.model_validate_json(path.read_text())
+  assert card.result.observed_models == ("deepseek-v4-pro",)
+  assert len(card.result.tasks) == 4
+  try:
+      write_scorecard_once(path, card)
+  except FileExistsError:
+      print("scorecard valid and immutable")
+  else:
+      raise SystemExit("scorecard was rewritable — STOP")
+  PY
+  test "$(grep -c '^exact_result_path=' research/runs/EXP-0002-integration-battery/RUN-EXP-0002-integration-battery-smoke-01/owner-eval.log)" -eq 1
   ! grep -R -E 'sk-[A-Za-z0-9]{12,}|DEEPSEEK_API_KEY=' research/runs/EXP-0002-integration-battery
   uv run pytest -q
   ```
@@ -8327,7 +9041,7 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
 
   ```bash
   git add experiments/EXP-0002-integration-battery.md \
-    research/runs/EXP-0002-integration-battery README.md
+    research/runs/EXP-0002-integration-battery
   git commit -m "test: prove the shared evaluator on four DeepSWE tasks"
   ```
 
@@ -8342,7 +9056,7 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
 - Consumes: four-task integration battery, Docker, DeepSWE/Qwen caches, proxy observations.
 - Produces: passed V10 pin with exact host facts and `supported_n_concurrent` in `[4, 8]`; STOP evidence otherwise.
 
-- [ ] **Step 1: Write parser tests with committed command transcripts.** Test `parse_meminfo`, `parse_df`, `parse_docker_info`, and `choose_supported_concurrency`. The chooser returns the largest fully successful probe in `(4, 6, 8)` and raises `DiscoveryContradiction` if none reaches `4`.
+- [ ] **Step 1: Write parser tests with committed command transcripts.** Test `parse_meminfo`, `parse_df`, `parse_docker_info`, and `choose_supported_concurrency`. The chooser returns the largest fully successful probe in `(4, 6, 8)` and raises `DiscoveryBlockedError` (Task 0's STOP error) if none reaches `4`.
 
 - [ ] **Step 2: Implement the probe.** `scripts/discover_v10_capacity.py` must record, without redaction except usernames/home paths: `uname -a`, `nproc`, `/proc/meminfo`, `df -B1`, `docker info --format '{{json .}}'`, `docker system df`, DeepSWE image digest, Qwen archive/cache digests, and three controlled four-task runs at concurrency 4, 6, and 8. Each run reuses the same frozen harness and gets a distinct preregistered smoke record and budget. Record wall time, max RSS, Docker failures, HTTP 429/5xx counts, and proxy costs.
 
@@ -8364,7 +9078,7 @@ Milestone exit: `der eval run` and Python callers synchronously traverse the sam
 
   Expected pass output: `status: passed`, `supported_n_concurrent: 4|6|8`, exact transcripts and digests. Exit `78` means stop all later tasks and send the pin to the owner; do not resize the approved system.
 
-- [ ] **Step 5: Verify and commit.** Run `uv run pytest tests/discovery/test_v10_capacity.py -q && uv run der pin verify research-plan/pins/v10-server-capacity.md`. Then:
+- [ ] **Step 5: Verify and commit.** Run `uv run pytest tests/discovery/test_v10_capacity.py -q && uv run der pins assert V10`. Then:
 
   ```bash
   git add scripts/discover_v10_capacity.py research-plan/pins/v10-server-capacity.md \
@@ -8379,7 +9093,7 @@ Milestone exit: the pinned AHE source is vendored with attribution; its active e
 ### Task 20: Vendor pinned AHE and define its narrow der adapter
 
 **Files:**
-- Create: `research/UPSTREAM.md`
+- Modify: `research/UPSTREAM.md` (created in Task 1)
 - Create: `research/PATCHES.md`
 - Create: `research/evolve.py`
 - Create: `research/configs/base.yaml`
@@ -8393,7 +9107,7 @@ Milestone exit: the pinned AHE source is vendored with attribution; its active e
 - Consumes: pinned AHE commit; `EvalRunner.run(EvalSpec) -> EvalResult`; lifecycle creation; per-task `TaskResult.pass_fraction`.
 - Produces: `run_ahe_evaluation(request: AheEvaluationRequest, runner: EvalRunner) -> AheEvaluationResponse`; `to_optimizer_state(result: EvalResult) -> dict[str, Decimal]`.
 
-- [ ] **Step 1: Copy only the approved upstream tree and record its identity.** From a clean temporary clone at commit `faf44bc4aea57413c520bc5711c6ebf628e0da1e`, copy `evolve.py`, `configs/base.yaml`, and `agents/` into `research/`. Write `research/UPSTREAM.md` with repository URL, commit, UTC retrieval timestamp, `git show -s --format=%H`, `git status --porcelain`, license path/digest, and SHA-256 for every copied file. Do not copy `.git`, caches, outputs, or credentials.
+- [ ] **Step 1: Copy only the approved upstream tree and record its identity.** From the pristine source cache at `/var/cache/der/sources/ahe` (already checked out at commit `faf44bc4aea57413c520bc5711c6ebf628e0da1e` by Task 1), copy `evolve.py`, `configs/base.yaml`, and `agents/` into `research/`. Extend the existing `research/UPSTREAM.md` (Task 1) with a new "Vendored AHE files" section recording UTC retrieval timestamp, `git show -s --format=%H`, `git status --porcelain`, license path/digest, and SHA-256 for every copied file. Do not copy `.git`, caches, outputs, or credentials.
 
 - [ ] **Step 2: Initialize the patch ledger before changing vendored code.** Create `research/PATCHES.md` with columns `ID`, `upstream commit`, `file/span`, `behavior removed`, `behavior added`, `rationale`, `test`. Add four rows with IDs `AHE-001` through `AHE-004` for the four approved seams; set each row's test to the exact test name planned below, not a prose promise.
 
@@ -8588,7 +9302,7 @@ Milestone exit: the pinned AHE source is vendored with attribution; its active e
       2>&1 | tee research/runs/ahe-toy/two-iteration.log
   ```
 
-  Expected: two distinct experiment IDs, two distinct explicit Pier result paths, two scorecards, and `next_iteration: 2`.
+  Expected: two distinct experiment IDs, two distinct explicit Pier result paths, two scorecards, and `next_iteration: 2`. If the vendored `evolve.py` at the pinned commit exposes different flag names for these concepts, use its actual flags and record the exact invocation in `research/runs/ahe-toy/README.md`; do not add new CLI surface beyond the four patched seams.
 
 - [ ] **Step 4: Prove hard-kill resume.** Repeat under `CAMP-AHE-TOY-02`, arrange `DER_TEST_KILL_AFTER_FINALIZE=1`, and expect exit `137` after iteration 0's commit marker. Rerun the identical command without the variable. Expected log says `resume: iteration 0 already finalized`; only iteration 1 invokes Pier.
 
@@ -8622,7 +9336,7 @@ Milestone exit: `harness/` is a real Qwen project; daily sync refuses an unevalu
 - Test: `tests/harness/test_sync.py`
 
 **Interfaces:**
-- Consumes: staging policy, `compute_harness_identity`, immutable scorecards.
+- Consumes: staging policy, `compute_identity`/`git_tree_oid` from Task 3, immutable scorecards.
 - Produces: `load_live_state(path: Path) -> LiveState`; `sync_harness(source: Path, destination: Path, *, evaluated_tree_oids: set[str], force: bool) -> SyncResult`; CLI `der harness sync`.
 
 - [ ] **Step 1: Write the three runtime-shaped project files.** `QWEN.md` states repository objective, test commands, evidence discipline, no secret access, and commit requirement. `settings.json` contains only Qwen project behavior verified for v0.20.0 and no request-shaping/executable fields. The skill gives a deterministic loop: inspect task, make smallest change, run focused test, run required verifier-facing checks, commit. Run `uv run der harness policy-check harness`; expected `request_shaping_keys=0 executable_keys=0`.
@@ -8637,8 +9351,11 @@ Milestone exit: `harness/` is a real Qwen project; daily sync refuses an unevalu
 
   ```text
   der harness status
+  der harness policy-check PATH
   der harness sync --from daily|managed --daily-path PATH [--force --reason TEXT]
   ```
+
+  `policy-check` runs `validate_evolvable_harness` and prints `request_shaping_keys=<n> executable_keys=<n>` (the counts of violations found; both must be `0` for success), exiting with `PolicyViolationError`'s code otherwise — Step 1 already relies on it.
 
   `--force` requires a nonempty reason and an interactive typed acknowledgment `UNEVALUATED TREE`; in noninteractive mode it additionally requires `DER_OWNER_ACK_UNEVALUATED_TREE=1`.
 
@@ -8662,7 +9379,7 @@ Milestone exit: `harness/` is a real Qwen project; daily sync refuses an unevalu
 - Test: `tests/fixtures/experiments/rejected-newer.json`
 
 **Interfaces:**
-- Consumes: immutable scorecards and `git_tree_oid(repo, "main:harness")`.
+- Consumes: immutable scorecards and the committed harness tree OID from `git(repo_root, "rev-parse", "main:harness")` (Task 3's checked Git helper).
 - Produces: `resolve_current_baseline(scorecards: Iterable[Path], *, main_harness_tree_oid: str) -> Baseline`; `compare_results(baseline: EvalResult, candidate: EvalResult) -> Comparability`.
 
 - [ ] **Step 1: Write the baseline test matrix.** Assert the resolver selects the most recent scorecard whose lifecycle decision is `adopted` and whose candidate tree OID equals `main:harness`; ignores a newer rejected scorecard; refuses duplicate adopted timestamps; raises `NoEvaluatedBaselineError` when no adopted scorecard matches; and does not read or create `baseline.json`.
@@ -8775,10 +9492,10 @@ Milestone exit: suite-v1 membership is frozen and pairwise disjoint; confirmatio
 - Create: `research/suites/candidates-v1.toml`
 - Create: `research/suites/suite-v1.toml`
 - Create: `research/suites/exclusions-v1.md`
-- Create: `research/der/suites/manifest.py`
-- Create: `research/der/suites/disjoint.py`
+- Modify: `research/der/suites/manifest.py` (created in Task 4; add the strictness rules below)
+- Modify: `research/der/suites/disjoint.py` (created in Task 4; add the leak-scan rules below)
 - Create: `research/der/suites/calibrate.py`
-- Test: `tests/suites/test_manifest.py`
+- Modify: `tests/suites/test_manifest.py` (extend Task 4's tests)
 - Test: `tests/suites/test_disjoint.py`
 - Test: `tests/suites/test_calibrate.py`
 
@@ -8788,7 +9505,7 @@ Milestone exit: suite-v1 membership is frozen and pairwise disjoint; confirmatio
 
 - [ ] **Step 1: Write deterministic selection tests.** Use a 40-task fixture with fixed pass rates, invalid rates, wall time, cluster label, and verifier-audit status. Assert selection is deterministic; development is approximately 16, confirmation approximately 8, spine 4–6; every class is nonempty and pairwise disjoint; confirmation is not selected by difficulty alone; excluded tasks carry one of `broken_verifier`, `unstable_infra`, `duplicate_cluster`, `too_easy`, `too_hard`, or `capacity_outlier`.
 
-- [ ] **Step 2: Implement strict TOML loading and disjointness.** Reject unknown fields, duplicate IDs, revision mismatch, absent task checksum, overlap across any pair, confirmation IDs in `optimizer_visible_task_ids`, and confirmation IDs in `critic_visible_task_ids`. Frozen manifests include `schema_version`, `suite_version`, `deep_swe_commit`, `created_at`, `selection_policy_digest`, and immutable ordered members.
+- [ ] **Step 2: Implement strict TOML loading and disjointness.** Reject unknown fields, duplicate IDs, revision mismatch, absent task checksum, overlap across any pair, confirmation IDs in `optimizer_visible_task_ids`, and confirmation IDs in `critic_visible_task_ids` (both are function arguments to the leak check, not manifest fields). Frozen manifests extend Task 2's `SuiteManifest` under its existing field names (`version`, `deep_swe_commit`, `reporting_k`, the three member classes, `frozen`) with two new required fields, `created_at` and `selection_policy_digest`; regenerate `research/schemas/suite.schema.json` and update the Task 4 suite fixtures in the same commit.
 
 - [ ] **Step 3: Implement calibration selection.** `select_suite` filters failed verifier audits and excessive invalidity, stratifies by task cluster and observed difficulty, chooses deterministic representatives using task ID as final tie-breaker, and emits every inclusion/exclusion reason. It does not use confirmation task content or outcomes after freeze.
 
@@ -8830,18 +9547,35 @@ Milestone exit: suite-v1 membership is frozen and pairwise disjoint; confirmatio
 
 - [ ] **Step 2: Run development, confirmation, and spine through `EvalRunner`.** Use three explicit `EvalSpec` files and exact result files under one run directory. Confirmation output may enter the scorecard only as aggregate counts/rates; no task ID, prompt, patch, trajectory, or per-task reward appears in README, ADB inputs, or critic bundles. Spine is reporting-only and cannot alter decision.
 
-- [ ] **Step 3: Finalize as the initial adopted baseline.** The finalizer permits `adopted` with no predecessor only when `der baseline show` returns `NoEvaluatedBaselineError` and candidate tree equals `main:harness`. Record this exceptional bootstrap rule in the lifecycle result block.
+- [ ] **Step 3: Record the initial adopted baseline.** The one-command finalizer arrives in Task 28 (Milestone 7 per the approved build order); here compose the proven primitives exactly as Task 18 Step 5 did — `write_scorecard_once`, `attach_scorecard`, then `transition_record(..., target=ExperimentStatus.ADOPTED, now=..., terminal_reason=..., adopted_at=...)`. Adopting with no predecessor is permitted only when the Task 24 resolver raises `NoEvaluatedBaselineError` and the candidate tree OID equals `git rev-parse main:harness`; assert both in the composing script before the transition and record this exceptional bootstrap rule in the record body. (When Task 28 lands, its finalizer re-verifies this scorecard unchanged; the README point appears when Task 29's generator lands.)
 
 - [ ] **Step 4: Verify exact evidence.** Run:
 
   ```bash
-  uv run der scorecard verify research/runs/EXP-0006-suite-v1-baseline/*/scorecard.json
+  uv run python - <<'PY'
+  import glob
+  from pathlib import Path
+  from research.der.contracts.scorecard import Scorecard
+  from research.der.experiments.baseline import resolve_current_baseline
+  from research.der.util.git import git
+  paths = [Path(p) for p in glob.glob("research/runs/EXP-0006-suite-v1-baseline/*/scorecard.json")]
+  assert paths, "no baseline scorecards found"
+  for path in paths:
+      Scorecard.model_validate_json(path.read_text())
+  main_tree = git(Path.cwd(), "rev-parse", "main:harness")
+  baseline = resolve_current_baseline(
+      (Path(p) for p in glob.glob("research/runs/**/scorecard.json", recursive=True)),
+      main_harness_tree_oid=main_tree,
+  )
+  assert baseline.experiment_id == "EXP-0006-suite-v1-baseline", baseline
+  print("baseline", baseline.experiment_id, main_tree)
+  PY
   uv run der baseline show --json | uv run python -m json.tool
-  uv run der evidence assert-no-confirmation-leak --root . --suite research/suites/suite-v1.toml
+  uv run python scripts/check.py
   uv run pytest -q
   ```
 
-  Expected: baseline experiment `EXP-0006-suite-v1-baseline`, tree OID equals `git rev-parse main:harness`, leak count `0`.
+  Expected: baseline experiment `EXP-0006-suite-v1-baseline`, tree OID equals `git rev-parse main:harness`, and `scripts/check.py` (which includes Task 26's confirmation-leak scan) reports `all checks passed`.
 
 - [ ] **Step 5: Commit.** Run:
 
@@ -8858,12 +9592,12 @@ Milestone exit: promotion decisions are calculated from preregistered contracts 
 
 **Files:**
 - Create: `research/der/experiments/metrics.py`
-- Create: `research/der/evaluation/artifact_manifest.py`
+- Modify: `research/der/evaluation/artifact_manifest.py` (created in Task 14; extend with the role/scrub rules below)
 - Create: `research/der/evaluation/finalizer.py`
 - Create: `research/der/ops/secret_scrub.py`
 - Modify: `research/der/cli.py`
 - Test: `tests/experiments/test_metrics.py`
-- Test: `tests/evaluation/test_artifact_manifest.py`
+- Modify: `tests/evaluation/test_artifact_manifest.py` (extend Task 14's tests)
 - Test: `tests/evaluation/test_finalizer.py`
 - Test: `tests/ops/test_secret_scrub.py`
 
@@ -8873,7 +9607,7 @@ Milestone exit: promotion decisions are calculated from preregistered contracts 
 
 - [ ] **Step 1: Write metric tests with explicit numerators and denominators.** Cover per-task pass fractions, macro pass@1, valid/failed/invalid counts, invalid fraction, tokens, cost, wall time, task-cluster descriptive interval, positive/negative minimum effect, equality at threshold, guardrail failure, falsifier trigger, incomparable/confounded input, and zero valid attempts. Invalid attempts are never converted to reward zero or removed from denominators without an explicit reported denominator.
 
-- [ ] **Step 2: Implement pure decision logic.** The function returns a typed object containing primary metric name; baseline/candidate values; observed effect; minimum effect; numerator/denominator for each; every guardrail value/limit/result; falsifier result; comparability; and verdict `qualifies`, `rejects`, `inconclusive`, or `invalid`. It does not write files and does not use a universal significance test.
+- [ ] **Step 2: Implement pure decision logic.** The function returns Task 2's `PromotionDecision` (verdict is the `PromotionVerdict` enum: `adopt`, `reject`, `inconclusive`, or `invalid`) carrying primary metric name; baseline/candidate values; observed effect; minimum effect; numerator/denominator for each; every guardrail value/limit/result; falsifier result; and comparability. It does not write files and does not use a universal significance test.
 
 - [ ] **Step 3: Write secret-scrub tests.** Scan names and bytes for provider/OpenAI/GitHub token patterns, `.env` assignments, PEM private keys, Authorization headers, dotenvx decrypted output, proxy run tokens, and known owner secrets supplied as SHA-256 only. Assert ordinary scorecard digests and redacted `***` strings pass. Scanner output is canonical JSON with scanned path count and findings; a finding raises before artifact manifesting.
 
@@ -8917,7 +9651,7 @@ Milestone exit: promotion decisions are calculated from preregistered contracts 
 - Consumes: all lifecycle records and immutable scorecards; no mutable summary tables.
 - Produces: `render_readme_block(records, scorecards) -> str`; `replace_generated_block(readme: str, block: str) -> str`.
 
-- [ ] **Step 1: Write one-block marker tests.** The only markers are `<!-- DER:BEGIN -->` and `<!-- DER:END -->`. Assert zero/multiple/unordered markers fail; replacement preserves all bytes outside the block; a second generation is byte-identical.
+- [ ] **Step 1: Write one-block marker tests.** The only markers are `<!-- DER:START -->` and `<!-- DER:END -->` (exactly the pair the locked file map assigns to `README.md`). Assert zero/multiple/unordered markers fail; replacement preserves all bytes outside the block; a second generation is byte-identical.
 
 - [ ] **Step 2: Write the complete golden scenario.** Include adopted, rejected, inconclusive, and invalid records; two suite versions; one bridge evaluation; a confounded run; costs/tokens/wall time; and adoption annotations. Assert the ledger includes every experiment exactly once and confirmation task identities never appear.
 
@@ -8961,14 +9695,14 @@ Milestone exit: ADB is an honestly labeled, license-cleared ephemeral view that 
 
   ```bash
   uv run python scripts/discover_v8_adb_license.py \
-    --ahe-checkout var/upstream/ahe-faf44bc4 \
+    --ahe-checkout /var/cache/der/sources/ahe \
     --pin research-plan/pins/v8-adb-license.md
   rc=$?; test "$rc" -eq 0 || test "$rc" -eq 78; exit "$rc"
   ```
 
   Expected pass output includes `allowed_mode`, file-by-file evidence, and exact source digests. Exit `78` blocks Tasks 31–34 only; existing evaluator operation remains usable.
 
-- [ ] **Step 5: Verify and commit.** Run `uv run pytest tests/discovery/test_v8_adb_license.py -q && uv run der pin verify research-plan/pins/v8-adb-license.md`. Then:
+- [ ] **Step 5: Verify and commit.** Run `uv run pytest tests/discovery/test_v8_adb_license.py -q && uv run der pins assert V8`. Then:
 
   ```bash
   git add scripts/discover_v8_adb_license.py research-plan/pins/v8-adb-license.md \
@@ -9004,7 +9738,7 @@ Milestone exit: ADB is an honestly labeled, license-cleared ephemeral view that 
   ```bash
   uv run python scripts/discover_v6_adb_parser.py \
     --license-pin research-plan/pins/v8-adb-license.md \
-    --ahe-source var/upstream/ahe-faf44bc4 \
+    --ahe-source /var/cache/der/sources/ahe \
     --trace tests/fixtures/adb/honest-trace.json \
     --pin research-plan/pins/v6-adb-runtime-parser.md
   rc=$?; test "$rc" -eq 0 || test "$rc" -eq 78; exit "$rc"
@@ -9027,7 +9761,7 @@ Milestone exit: ADB is an honestly labeled, license-cleared ephemeral view that 
 
 **Files:**
 - Create: `research/der/integrations/critic.py`
-- Create: `research/templates/experiment.md`
+- Modify: `research/templates/experiment.md` (created in Task 4; add the critic-provenance section)
 - Modify: `research/der/cli.py`
 - Test: `tests/integrations/test_critic.py`
 - Test: `tests/fixtures/critic/codex-events.jsonl`
@@ -9135,6 +9869,7 @@ Milestone exit: ADB is an honestly labeled, license-cleared ephemeral view that 
 - Create: `ops/systemd/der.env.example`
 - Create: `ops/install-systemd.sh`
 - Create: `ops/runbook.md`
+- Modify: `research/der/cli.py` (adds `der lock probe`, `der smoke terminal-bench`, `der doctor --require-unattended`)
 - Modify: `.github/workflows/check.yml`
 - Modify: `scripts/check.py`
 - Test: `tests/ops/test_janitor.py`
@@ -9179,7 +9914,7 @@ Milestone exit: ADB is an honestly labeled, license-cleared ephemeral view that 
 - [ ] **Step 11: Commit.** Run:
 
   ```bash
-  git add research/der/ops/janitor.py research/der/ops/notify.py ops \
+  git add research/der/ops/janitor.py research/der/ops/notify.py research/der/cli.py ops \
     .github/workflows/check.yml scripts/check.py tests/ops README.md
   git commit -m "ops: deploy the guarded single-server research loop"
   ```

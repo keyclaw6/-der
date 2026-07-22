@@ -1,35 +1,25 @@
-# research-plan/ — der auto-research loop planning artifacts
+# research-plan/ — der auto-research loop: planning record and execution inputs
 
-Stage 1 (architecture) planning record for the der auto-research loop. Produced 2026-07-21 through an adversarial multi-agent review process; committed here so external reviewers can access the full record.
+Final planning state, ready for implementation. Produced 2026-07-21/22 through a multi-round adversarial process (three internal review rounds, an external GPT 5.6 Sol Pro architecture review, a final gap audit, and an external implementation-plan author audited in round 6). Superseded drafts (v1–v3) were removed in the cleanup commit — Git history is the archive.
 
-## Status
+## The two files that matter for execution
 
-- **Stage 1 (architecture): restructured and final-audited.** Rounds 1–3 (internal adversarial: 6 reviewer agents) converged draft_v3; round 4 (external GPT 5.6 Sol Pro review) returned RESTRUCTURE with five approval conditions — all adopted in **draft_v4**; round 5 (gap audit) verified 100% integration, restored four dropped protections, and source-verified the new load-bearing facts. **Awaiting owner approval.**
-- **Stage 2 (implementation plan): not started** — blocked on owner approval of Stage 1.
+| Role | File |
+| --- | --- |
+| **Stage 1 — approved architecture** (decisions D1–D12, build order, verification items) | `research-plan/stage1-architecture.md` |
+| **Stage 2 — implementation plan** (34 tasks, unattended-ready, audited + repaired) | `research-plan/2026-07-21-der-auto-research-loop-stage2.md` |
 
-## Reading order
+The Stage 2 plan is **unattended-ready**: STOP gates follow the Unattended STOP protocol (Execution conventions §3 — soft stops record deviations to `research-plan/DEVIATIONS.md` and continue with best judgment; hard halts only for spend-limit, security/isolation, or unevaluated-ship violations). All frozen upstream revisions and DeepSeek pricing were verified against live sources on 2026-07-22 (AHE `faf44bc4`, Pier v0.3.0 `e69a20e4`, Qwen v0.20.0 `92fda560`, DeepSWE commit `8cae5984` — benchmark v1.1 has no upstream git tag, pinned by commit; pricing 0.003625/0.435/0.87 per 1M matches the official DeepSeek page).
 
-1. `context.md` — project context, owner constraints, and source-verified facts about AHE, Qwen Code, and harbor.
-2. `draft_v4.md` — **the architecture awaiting approval** (§9 records the round-4 adopt/retain/reject disposition; §10 is the convergence log; v1–v3 retained for history).
-3. `reviews/` — the eight review documents:
-   - `round1_forge.md` (systems/contracts), `round1_prism.md` (source-fidelity audit against AHE/harbor/Qwen Code code), `round1_flint.md` (operations/YAGNI/cost)
-   - `round2_vex.md` (red team on round-1 additions), `round2_sage.md` (implementation-readiness)
-   - `round3_arbiter.md` (closure audit: resolution matrix + regression sweep)
-   - `round4_solpro.md` (**external GPT 5.6 Sol Pro review** — RESTRUCTURE verdict that produced v4)
-   - `round5_sentry.md` (final gap audit of the v4 integration)
-4. `REVIEW_PROMPT.md` — the mission brief that produced the round-4 external review.
-5. `STAGE2_PROMPT.md` — the mission brief for the Stage 2 implementation-plan author (GPT 5.6 Sol Pro): produces a single downloadable markdown plan, to be committed under `research-plan/plans/` and reviewed before execution.
+## Process record
 
-## Stage 1 approval
+- `context.md` — constraints and source-verified facts gathered before drafting.
+- `stage1-architecture.md` — the approved architecture (formerly draft_v4; §9 records the external-review disposition, §10 the full convergence log).
+- `reviews/` — the audit trail: `round1_forge/prism/flint` (internal adversarial), `round2_vex/sage` (red team + readiness), `round3_arbiter` (closure), `round4_solpro` (external architecture review — RESTRUCTURE, adopted), `round5_sentry` (integration gap audit), `round6_mason` (Stage 2 plan audit — 58 fixes, verdict READY-AFTER-APPLIED-FIXES).
+- `REVIEW_PROMPT.md` / `STAGE2_PROMPT.md` — the mission briefs that produced round 4 and the Stage 2 plan.
+- `pins/` and `DEVIATIONS.md` — created during execution by the implementation agent (discovery evidence and recorded deviations).
 
-Stage 1 (draft_v4) was approved by the owner on 2026-07-21, gating Stage 2 commissioning.
+## Related
 
-## Related documents
-
-- `/VISION.md` (repo root) — the project's human-owned North Star (committed, approved).
-- AHE (the research-loop base): https://github.com/china-qijizhifeng/agentic-harness-engineering
-- Qwen Code (the harness base runtime): https://github.com/QwenLM/qwen-code
-- DeepSWE v1.1 (candidate eval suite): https://github.com/datacurve-ai/deep-swe · runner: https://github.com/datacurve-ai/pier
-- Benchmark methodology reference: https://github.com/Tura-AI/benchmark/blob/main/doc/benchmark-methodology.md
-
-Note: review files reference local audit paths like `ahe-src/evolve.py` with line numbers — those refer to the AHE repository's files at its current `main` (pinned commit recorded during Stage 2), fetchable from the AHE link above.
+- `/VISION.md` — the project's human-owned North Star (approved, committed).
+- Upstream sources: [AHE](https://github.com/china-qijizhifeng/agentic-harness-engineering) · [Pier](https://github.com/datacurve-ai/pier) · [DeepSWE](https://github.com/datacurve-ai/deep-swe) · [Qwen Code](https://github.com/QwenLM/qwen-code)

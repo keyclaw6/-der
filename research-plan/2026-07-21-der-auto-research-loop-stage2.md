@@ -1,6 +1,8 @@
 # der auto-research loop — Stage 2 Implementation Plan
 
 > **For agentic workers:** execute this plan task-by-task, one task per session where possible. Steps use checkbox (`- [ ]`) syntax for tracking. Do not start a task while a prior task's STOP-gate is unresolved. Work on a dedicated branch (Task 0 creates it).
+>
+> **This plan runs unattended — no step may wait for the owner.** When a STOP gate fires or observed reality contradicts the plan, apply the Unattended STOP protocol (Execution conventions §3) with best judgment: adapt implementation details to observed reality within the Global Constraints, record the deviation, and continue. Only the three hard-halt conditions in that protocol stop the run. Tasks 17–34 specify some steps as precise prose contracts rather than full code blocks: implement them with best judgment, honoring every stated assertion, exit code, and constraint.
 
 **Goal:** Build the approved, fail-closed der auto-research loop so one owner can evaluate, compare, adopt, publish, and safely operate Qwen harness experiments through a single Pier-backed evidence path.
 
@@ -34,12 +36,12 @@ Before touching code in any task, read the task's named files and the source row
 
 | Source | Locked revision | Required files or documentation | Why it is authoritative here |
 |---|---|---|---|
-| Approved architecture | repository file `research-plan/draft_v4.md` | Decisions D1–D12, §4, §8, §9 | Governs all design choices and phase order. |
+| Approved architecture | repository file `research-plan/stage1-architecture.md` | Decisions D1–D12, §4, §8, §9 | Governs all design choices and phase order. |
 | Project constraints | repository file `research-plan/context.md` | entire file | Governs scope, cost, operating model, and source-verified context. |
 | Architecture rationale | repository files `research-plan/reviews/round4_solpro.md`, `research-plan/reviews/round5_sentry.md` | entire files | Explains why v4 chose the approved seams and gates. |
-| North Star | repository file `VISION.md` | entire file | Context only; it never overrides `draft_v4.md`. |
+| North Star | repository file `VISION.md` | entire file | Context only; it never overrides `stage1-architecture.md`. |
 | Pier | `datacurve-ai/pier` tag `v0.3.0`, commit `e69a20e4e0ac073ec71fde0274bab3d9f40bac87` | `src/pier/cli/jobs.py`, `src/pier/agents/`, `src/pier/environments/`, `src/pier/models/trial/` | Sole scored evaluator and custom-agent contract. |
-| DeepSWE | `datacurve-ai/deep-swe` tag `v1.1`, commit `8cae5984d5dd0ee37445beff0e928dc10c331116` | task directories, `task.toml`, `pre_artifacts.sh`, `tests/`, verifier entry points | Primary task suite and task/verifier format. |
+| DeepSWE | `datacurve-ai/deep-swe` benchmark version v1.1 — pinned by commit `8cae5984d5dd0ee37445beff0e928dc10c331116` (upstream publishes no v1.1 git tag; commit verified present 2026-07-22) | task directories, `task.toml`, `pre_artifacts.sh`, `tests/`, verifier entry points | Primary task suite and task/verifier format. |
 | AHE | `china-qijizhifeng/agentic-harness-engineering` commit `faf44bc4aea57413c520bc5711c6ebf628e0da1e` | `evolve.py`, `configs/base.yaml`, `agents/`, bundled ADB `_source` | Vendored optimizer and the four approved patch seams. |
 | Qwen Code | `QwenLM/qwen-code` tag `v0.20.0`, commit `92fda5603e84ef62a1b29bf6faf4f6a8124a2bf7` | standalone installer, CLI argument source, session/stream serializers | Rollout CLI behavior and archive/runtime contract. |
 | Qwen Code docs | versioned pages matching v0.20.0 | installation, configuration, headless mode, skills, checkpointing/session docs | Human-readable explanation of the same locked CLI. |
@@ -50,7 +52,7 @@ The verified Pier CLI surface used by this plan is `pier run --path ... --includ
 
 1. Run every command from the repository root unless a step supplies a different `cd`.
 2. Use `uv run` for Python entry points and tests. Do not activate a mutable global virtual environment.
-3. A discovery script exits `0` only after writing a `status: passed` pin with its exact command transcript. Exit `78` means STOP: commit the blocked pin, do not run downstream tasks, and escalate the evidence to the owner. Any other nonzero status is an ordinary task failure to repair before committing.
+3. A discovery script exits `0` only after writing a `status: passed` pin with its exact command transcript. Exit `78` means STOP — apply the **Unattended STOP protocol**: commit the blocked pin, append an entry to `research-plan/DEVIATIONS.md` (expected vs observed, with the exact evidence), then resolve with best judgment and continue under these rules: (a) adapt implementation details to observed reality while preserving every Global Constraint and approved-architecture decision; (b) never silently change a pinned upstream revision — re-pin only with a deviation entry recording old → new and why; (c) **hard-halt only when continuing would** exceed RunBudget/prepaid spend limits, weaken a security or isolation gate (keyless containers, egress allowlists, adopt/sync refusals), or ship unevaluated state — in exactly those cases stop and leave the evidence for the owner. Any other nonzero status is an ordinary task failure to repair before committing. The owner reviews `DEVIATIONS.md` after the run; no step waits for them.
 4. Live commands that spend provider money require `DER_LIVE=1`, a run token issued by the local proxy, and an approved lifecycle record. Tests must use fixtures and in-process fakes; they do not make provider calls.
 5. Use UTC RFC 3339 timestamps in data files. Human prose may show local time separately.
 6. Generated files are regenerated and compared byte-for-byte in CI. A generated file is never hand-edited.
@@ -249,7 +251,7 @@ Milestone exit: the repository installs reproducibly; every upstream revision is
   git clone https://github.com/keyclaw6/-der.git der
   cd der
   git switch -c stage2/auto-research-loop
-  test -f research-plan/draft_v4.md
+  test -f research-plan/stage1-architecture.md
   git status --short
   ```
 
@@ -259,14 +261,14 @@ Milestone exit: the repository installs reproducibly; every upstream revision is
 
   ```bash
   sha256sum \
-    research-plan/draft_v4.md \
+    research-plan/stage1-architecture.md \
     research-plan/context.md \
     research-plan/reviews/round4_solpro.md \
     research-plan/reviews/round5_sentry.md \
     VISION.md
   ```
 
-  Paste this output into the Task 0 commit body. Do not make code changes if `draft_v4.md` is absent or does not identify itself as v4.
+  Paste this output into the Task 0 commit body. Do not make code changes if `stage1-architecture.md` is absent or does not identify itself as v4.
 
 - [ ] **Step 3: Write the package and dependency manifests.** Create `pyproject.toml` with this complete content:
 
@@ -1146,7 +1148,7 @@ Milestone exit: the repository installs reproducibly; every upstream revision is
   uv run der pins assert V7
   ```
 
-  Expected stdout is a one-line JSON object with `"status": "passed"` and a positive `tasks` count, followed by `V7 passed: research-plan/pins/v7-deepswe-revisions.md`. If the script exits `78`, stop all subsequent tasks, retain the generated blocked pin, and escalate its transcript to the owner; do not select a different DeepSWE revision or repair upstream task content.
+  Expected stdout is a one-line JSON object with `"status": "passed"` and a positive `tasks` count, followed by `V7 passed: research-plan/pins/v7-deepswe-revisions.md`. If the script exits `78`, retain the generated blocked pin and apply the Unattended STOP protocol; never repair upstream task content, and re-pin to a different DeepSWE revision only via a `DEVIATIONS.md` entry recording old → new with the evidence.
 
 - [ ] **Step 8: Spot-check verifier auditability from the recorded, real task list.** Run this exact command, which selects the first, middle, and last task deterministically from the pin rather than inventing task names:
 
@@ -3869,7 +3871,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
   sed -n '1,220p' research-plan/pins/v3-qwen-archive-install.md
   ```
 
-  Expected observable output: the summary has `"status": "passed"`; the transcript shows `docker run --network none`; `version_stdout` contains `0.20.0`; and the pin records a real archive SHA-256 and image ID. Exit `78`, `status: blocked`, a missing checksum, a network-dependent install, or any other version is a STOP gate. Commit the blocked pin alone and escalate it to the owner.
+  Expected observable output: the summary has `"status": "passed"`; the transcript shows `docker run --network none`; `version_stdout` contains `0.20.0`; and the pin records a real archive SHA-256 and image ID. Exit `78`, `status: blocked`, a missing checksum, a network-dependent install, or any other version is a STOP gate: commit the blocked pin and apply the Unattended STOP protocol (e.g. fall back to installing the pinned package from a locally cached tarball if the standalone archive is the blocker — record the deviation); a network-dependent install at rollout time remains forbidden (isolation gate).
 
 - [ ] **Step 9: Commit.** Run:
 
@@ -4416,7 +4418,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
     | grep -E -n 'prompt_tokens|completion_tokens|prompt_cache_hit_tokens|usage' | head -30
   ```
 
-  At generation on 2026-07-21, the official English pricing page states USD per one million tokens for `deepseek-v4-pro`: cache-hit input `0.003625`, cache-miss input `0.435`, output `0.87`. Step 2 pins those values with the documentation URL and retrieval date. If the live page differs when this task executes, STOP, record the page output for the owner, and obtain an architecture-preserving policy-version update before proceeding; do not silently retain stale prices.
+  At generation on 2026-07-21, the official English pricing page states USD per one million tokens for `deepseek-v4-pro`: cache-hit input `0.003625`, cache-miss input `0.435`, output `0.87`. Step 2 pins those values with the documentation URL and retrieval date. If the live page differs when this task executes, this is a soft stop under the Unattended STOP protocol: record the page output in the pin and `DEVIATIONS.md`, bump the pricing policy version to the live values (architecture-preserving), and proceed; do not silently retain stale prices.
 
 - [ ] **Step 2: Extend the immutable proxy policy with exact source-attributed pricing.** Append to `research/config/runtime-policy.toml`:
 
@@ -5202,7 +5204,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
     92fda5603e84ef62a1b29bf6faf4f6a8124a2bf7 -- packages | head -140
   ```
 
-  Record in review notes that Pier's class is `pier.agents.base.BaseAgent`; `setup(environment)` and `run(instruction, environment, context)` are async; and Qwen v0.20.0 supports `-p`, `--output-format stream-json`, `--yolo`, `--max-session-turns`, `--max-wall-time`, and `--max-tool-calls`. The implementation below does not locate sessions by recency.
+  Record in review notes that Pier's class is `pier.agents.base.BaseAgent`; `setup(environment)` and `run(instruction, environment, context)` are async; and Qwen v0.20.0 supports `-p`, `--output-format stream-json`, `--yolo`, `--max-session-turns`, `--max-wall-time`, and `--max-tool-calls`. The implementation below does not locate sessions by recency. If any expected flag or the result-subtype literals used in Step 2 (`error_max_turns`, `error_max_wall_time`, `error_max_tool_calls`) do not surface in the pinned source, apply the Unattended STOP protocol: capture the actual strings from the source grep (or from the first V1/V2 live session), update the fixtures and the `qwen_stream` mapping to the observed literals in the same commit, and record the substitution in `DEVIATIONS.md` — fixtures are subordinate to live evidence by design.
 
 - [ ] **Step 2: Create source-shaped JSONL fixtures.** Create `tests/fixtures/qwen/success.jsonl`:
 
@@ -6522,7 +6524,7 @@ Milestone exit: a real DeepSWE task runs through Pier with `DerQwenAgent`; Qwen 
   }
   ```
 
-  Expected observable output includes Pier's exact `Results written to ...` line and exit code zero. If the provisional route fails inside Pier, preserve the command output, write a blocked V2 pin with Step 12, and escalate; do not enable general internet access.
+  Expected observable output includes Pier's exact `Results written to ...` line and exit code zero. If the provisional route fails inside Pier, preserve the command output, write a blocked V2 pin with Step 12, and apply the Unattended STOP protocol: try the isolation-preserving fallbacks in order (documented host-gateway address, stable private hostname, explicit extra-host mapping), recording each attempt in `DEVIATIONS.md`; never enable general internet access (isolation gate). If no isolation-preserving route works, this is a hard halt — the evaluator cannot run.
 
 - [ ] **Step 12: Validate and record the eight-point chain.** Run:
 
@@ -9869,7 +9871,7 @@ Milestone exit: ADB is an honestly labeled, license-cleared ephemeral view that 
 - Create: `ops/systemd/der.env.example`
 - Create: `ops/install-systemd.sh`
 - Create: `ops/runbook.md`
-- Modify: `research/der/cli.py` (adds `der lock probe`, `der smoke terminal-bench`, `der doctor --require-unattended`)
+- Modify: `research/der/cli.py` (adds `der lock probe`, `der smoke`, `der doctor --require-unattended`)
 - Modify: `.github/workflows/check.yml`
 - Modify: `scripts/check.py`
 - Test: `tests/ops/test_janitor.py`
@@ -9888,13 +9890,13 @@ Milestone exit: ADB is an honestly labeled, license-cleared ephemeral view that 
 
 - [ ] **Step 4: Create `der-pinning-proxy.service`.** Run as a dedicated unprivileged user, bind the V2-pinned host address/port, use dotenvx only around the proxy process, set `NoNewPrivileges=true`, `PrivateTmp=true`, `ProtectSystem=strict`, explicit writable state paths, `UMask=0077`, finite stop timeout, and health check. Do not expose provider keys in an Environment line or command argument.
 
-- [ ] **Step 5: Create `der-evolve.service`.** `WorkingDirectory` is the dedicated autonomous worktree; `ExecStartPre` invokes `test ! -e .../COST_CEILING_REACHED`, `der doctor --require-unattended`, and `der lock probe`; `ExecStart` uses `dotenvx run` only for proxy/balance owner processes and starts patched `research/evolve.py` with `max_iterations=10`, finite timeouts, best-of-n/explore off. The service environment sets `DER_UNATTENDED=1`; adoption/sync code treats this as an unconditional write refusal for `harness/`.
+- [ ] **Step 5: Create `der-evolve.service`.** `WorkingDirectory` is the dedicated autonomous worktree; `ExecStartPre` invokes `test ! -e .../COST_CEILING_REACHED`, `der doctor --require-unattended`, and `der lock probe`; `ExecStart` uses `dotenvx run` only for proxy/balance owner processes and starts patched `research/evolve.py` with `max_iterations=10`, finite timeouts, best-of-n/explore off. The service environment sets `DER_UNATTENDED=1`; adoption/sync code treats this as an unconditional write refusal for `harness/`. The patched AHE path creates one preregistered lifecycle record per iteration **before** each `EvalRunner` call — `create_record(...)` with `status: running`, `proposer: AHE`, the iteration's contract fields, and the record path carried as the `EvalSpec` experiment ID; the Step-9 drills assert a two-iteration dry run produces exactly two records whose IDs match their EvalSpecs.
 
 - [ ] **Step 6: Create watchdog/timer/notify units and installer.** Timer uses `OnBootSec=5m`, `OnUnitActiveSec=15m`, `Persistent=true`. Installer copies only after `systemd-analyze verify`, requires root, creates state directories with exact ownership/mode, reloads daemon, enables proxy/watchdog timer, and leaves evolve disabled until owner starts it.
 
-- [ ] **Step 7: Add terminal-bench smoke as explicitly unscored.** `der smoke terminal-bench` runs one cached task through Qwen/proxy, stores logs under `research/runs/smoke/`, and writes no `EvalResult`, scorecard, lifecycle promotion decision, or README datapoint. Tests assert the command cannot accept `--score` or a confirmation suite.
+- [ ] **Step 7: Add the unscored pipeline smoke.** `der smoke` runs one task through Qwen/proxy from the already-pinned DeepSWE source cache — selected deterministically as the lexicographically first task ID that belongs to no suite (development, confirmation, or spine) — stores logs under `research/runs/smoke/`, and writes no `EvalResult`, scorecard, lifecycle promotion decision, or README datapoint. No terminal-bench cache is required or provisioned. Tests assert the command cannot accept `--score` or a confirmation suite, and that the selected task is suite-disjoint.
 
-- [ ] **Step 8: Write the runbook as copy-paste procedures.** Include exact commands for source/bootstrap pins, creating the dedicated worktree, dotenvx setup without plaintext commit, archive/image cache, systemd install/start/stop/status, owner evaluation, AHE start/resume, cost-ceiling diagnosis/owner-only clear, adoption and rebase-and-reeval, guarded daily sync, terminal-bench smoke, secret scrub, janitor dry-run/apply, finalizer recovery, corrupted/missing exact-result refusal, proxy outage, provider 4xx/5xx, disk pressure, and restoring from immutable scorecards. Every procedure has expected observable output and a STOP condition.
+- [ ] **Step 8: Write the runbook as copy-paste procedures.** Include exact commands for source/bootstrap pins, creating the dedicated worktree, dotenvx setup without plaintext commit, archive/image cache, systemd install/start/stop/status, owner evaluation, AHE start/resume, cost-ceiling diagnosis/owner-only clear, adoption and rebase-and-reeval, guarded daily sync, unscored smoke, secret scrub, janitor dry-run/apply, finalizer recovery, corrupted/missing exact-result refusal, proxy outage, provider 4xx/5xx, disk pressure, and restoring from immutable scorecards. Every procedure has expected observable output and a STOP condition.
 
 - [ ] **Step 9: Run recovery drills on the real server.** Perform: kill proxy during a smoke run → invalid/network; kill Pier → no finalizer write; kill finalizer before marker → exact rollback then successful replay; occupy lock → second evaluator refuses; create ceiling flag → evolve `ExecStartPre` refuses; make `main:harness` unevaluated → sync refuses; move baseline tree → adopt refuses; inject fake secret → scrub refuses. Paste commands and sanitized outputs into `ops/runbook.md` under `Verified recovery drills — 2026-07-21`.
 
